@@ -69,9 +69,14 @@ Issues and pull requests are welcome: bug fixes, better doctrine in `strategy.md
 support for more models, more game data read by the plugin. Attach the battle log (`logs/*.jsonl`) to
 bug reports. Code comments and log lines are in English. Never commit game files.
 
+## Feedback and Support
+Join the J&P Discord and reach out there in the J&P Rebalance Mod channels https://discord.gg/NmHUGvq 
+
 ## Credits and license
 
 - Design and approach: [rome-battle-ai](https://github.com/Cegli865/rome-battle-ai) by Cegli865 (MIT).
 - Ultimate General: Civil War is a game by Game-Labs. This project is not affiliated with Game-Labs.
 - Some players use it together with the Rebalance mod; the plugin works with or without it.
 - Released under the [MIT License](LICENSE).
+
+
