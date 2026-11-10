@@ -1,0 +1,38 @@
+UGCW Battle AI v0.1.2-beta - BUILDING THE PLUGIN INTO THE GAME DLL (dnSpy)
+===========================================================================
+You need: dnSpy (https://github.com/dnSpy/dnSpy, the 64-bit .NET build), and the Mono build of Ultimate General: Civil War
+(Unity 5.4.4). The plugin is 11 C# classes in the "UgcwAi" namespace plus ONE line added to a game method.
+It is adapted from the rome-battle-ai plugin by Cegli865. The game's own Assembly-CSharp.dll is not part of this package.
+
+0. BACK UP FIRST. Close the game. In "<game folder>\\<game name>_Data\\Managed" copy Assembly-CSharp.dll to
+   Assembly-CSharp.dll.original. Keep it: it is the only way back to the unmodified game.
+
+1. OPEN THE RIGHT FILE. In dnSpy: File > Open, and open Assembly-CSharp.dll FROM that Managed folder (not from a copy
+   somewhere else), otherwise UnityEngine / Newtonsoft.Json references are not found and nothing compiles.
+   (If you still get "type JArray / ScriptableObject / Debug not found": Edit > Edit Assembly References, or reopen from Managed.)
+
+2. ADD THE CLASSES, in this order (each one compiles on its own once the ones before it exist):
+      Bridge, Orders, AiThoughtsPanel, UnitExtras, MissionGoals, Commands, TerrainScan, BattleResult, Snapshot, Runner, Bootstrap
+   For each: right-click the Assembly-CSharp module (or the "UgcwAi" namespace once it exists) > Add Class...,
+   select all the text in the editor, paste the whole content of the matching file from "plugin", click Compile.
+   Fix nothing by hand: if a class does not compile, the error text tells which class before it is missing.
+   Notes:
+   - The files already contain "namespace UgcwAi { ... }" and their own "using" lines.
+   - Rebalance mod users: nothing to do, the canister range is read by reflection and works with or without it.
+   - TerrainScan.Objectives must stay "internal static" (it already is).
+
+3. ADD THE ONE HOOK. Find the game class BattleLogic, method Run(), and add as its FIRST line:
+         UgcwAi.Bootstrap.Init();
+   (right-click the method > Edit Method (C#), add the line, Compile.) Bootstrap creates the plugin object, starts the
+   connection to the planner server on 127.0.0.1:8765 and logs "[UgcwAi] loads".
+
+4. SAVE: File > Save Module... (OK). Forgetting this step is the most common reason why nothing changes in the game.
+
+5. CHECK: start the game, load a battle, then open the game log (Unity output_log.txt / Player.log). You should see
+   "[UgcwAi] loads", "[UgcwAi] BattleResult hook installed" and, every 2 seconds, "[UgcwAi] units=... playerSide=...".
+   Keys in battle: F6 shows or hides the AI's reasoning panel, F8 pauses, F9 takes the AI's units away from the game's AI.
+
+After a game update or "Verify integrity of game files", Steam restores the original DLL: repeat step 4's file copy
+(keep your modded DLL in a safe place) or redo the steps above.
+
+Then install the Python server: see START_HERE.txt and readme.txt.

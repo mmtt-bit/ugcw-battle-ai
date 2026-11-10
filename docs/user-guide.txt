@@ -1,0 +1,421 @@
+UGCW AI COMMANDER  -  v0.1.2-beta (2026-11-10)
+An LLM that commands the AI army in Ultimate General: Civil War
+=====================================================================
+
+WHAT IT IS
+----------
+A mod that lets a large language model play the computer-controlled side (the South in
+the default setup) while you play the other one. Every few seconds of play the game pauses,
+sends the battlefield to a small Python server, the server asks the model for orders, checks
+them against the rules of the game, sends them back, and the game resumes.
+
+It has two parts:
+  1. A plugin compiled into the game's Assembly-CSharp.dll (the "UgcwAi" namespace). It reads
+     the battlefield, sends it to the server and executes the orders. It is adapted from the
+     rome-battle-ai plugin by Cegli865 for Ultimate General: Civil War (Unity 5.4.4, Mono).
+  2. A Python planner server (standard library only, no pip packages). It talks to the plugin
+     over TCP on 127.0.0.1:8765, builds the prompts, calls the model and validates the orders.
+
+Status: BETA, experimental. Tested on a few missions only (River crossing and others), one battle at a time.
+Expect rough edges; please report problems with the server console output and the files of the logs/ and reports/ folders.
+
+
+WHAT YOU NEED
+-------------
+- Ultimate General: Civil War (Mono build, Unity 5.4.4).
+- Windows with Python 3.8 or newer (no extra packages).
+- One model source (see "CHOOSING A MODEL"): Ollama with a local model, Claude through the
+  Claude Code command line (Claude Pro or Max subscription), or any OpenAI-compatible server.
+- To build the DLL yourself: dnSpy. If you were given a ready-made modded DLL, you do not
+  need it.
+
+
+INSTALLATION
+------------
+Step 1. Install the modded game DLL
+  a. Close the game.
+  b. Open the game folder (Steam: right-click the game > Manage > Browse local files), then the
+     "<game name>_Data\Managed" folder.
+  c. COPY Assembly-CSharp.dll to a safe place first (for example Assembly-CSharp.dll.original).
+     Without this backup you cannot go back to the unmodified game.
+  d. Replace Assembly-CSharp.dll with the modded one.
+  e. After a game update or a "verify integrity of game files" the DLL is replaced by the
+     original and the mod stops working: copy the modded DLL back.
+
+  To confirm that it loaded, start a battle and look at the game log
+  (Unity Player.log / output_log.txt). You should see lines starting with "[UgcwAi]", including
+  "[UgcwAi] BattleResult hook installed".
+
+Step 2. Install the Python server
+  a. Create a folder, for example C:\ugcw-ai.
+  b. Copy into it everything from the "server" folder of this package: planner_server.py, prompting.py,
+     situation.py, equipment.py, autopilot.py, relief.py, assault.py, battery.py, cavalry.py, supply.py,
+     report.py, assessment.py, goals.py, backends.py, terrain.py, show_log.py, rescore.py,
+     config.json, strategy.md, game_rules.md.
+     All the .py files must come from the same release: mixing old and new files causes
+     errors such as "takes from 3 to 6 positional arguments but 7 were given".
+  c. Open a terminal in that folder and run:   python planner_server.py
+     It prints "Waiting for the game on 127.0.0.1:8765".
+  d. Start the game, load a battle and play. The plugin connects by itself; the server
+     console shows the terrain, each planning turn, the model's reasoning and the orders.
+
+Step 3. First test
+  - Keep "dry_run": true in config.json for the first test. The model is queried and its
+    orders are logged, but nothing is sent to the game, so you can read what it would do.
+  - Set "dry_run": false to let it command the army.
+  - Add --prompts when reading a log (see "LOGS AND REPORTS") to see exactly what the model saw.
+
+Building the plugin yourself (dnSpy)
+  See PLUGIN_INSTALL.txt (11 classes in plugin-source plus one line in BattleLogic.Run). Always "File > Save Module"
+  afterwards, and open the DLL from the game's Managed folder.
+
+
+CHOOSING A MODEL"): Ollama with a local model, Claude through the
+  Claude Code command line (Claude Pro or Max subscription), or any OpenAI-compatible server.
+- To build the DLL yourself: dnSpy. If you were given a ready-made modded DLL, you do not
+  need it.
+
+
+INSTALLATION
+------------
+Step 1. Install the modded game DLL
+  a. Close the game.
+  b. Open the game folder (Steam: right-click the game > Manage > Browse local files), then the
+     "<game name>_Data\Managed" folder.
+  c. COPY Assembly-CSharp.dll to a safe place first (for example Assembly-CSharp.dll.original).
+     Without this backup you cannot go back to the unmodified game.
+  d. Replace Assembly-CSharp.dll with the modded one.
+  e. After a game update or a "verify integrity of game files" the DLL is replaced by the
+     original and the mod stops working: copy the modded DLL back.
+
+  To confirm that it loaded, start a battle and look at the game log
+  (Unity Player.log / output_log.txt). You should see lines starting with "[UgcwAi]", including
+  "[UgcwAi] BattleResult hook installed".
+
+Step 2. Install the Python server
+  a. Create a folder, for example C:\ugcw-ai.
+  b. Copy into it everything from the "server" folder of this package: planner_server.py, prompting.py,
+     situation.py, equipment.py, autopilot.py, relief.py, assault.py, battery.py, cavalry.py, supply.py,
+     report.py, assessment.py, goals.py, backends.py, terrain.py, show_log.py, rescore.py,
+     config.json, strategy.md, game_rules.md.
+     All the .py files must come from the same release: mixing old and new files causes
+     errors such as "takes from 3 to 6 positional arguments but 7 were given".
+  c. Open a terminal in that folder and run:   python planner_server.py
+     It prints "Waiting for the game on 127.0.0.1:8765".
+  d. Start the game, load a battle and play. The plugin connects by itself; the server
+     console shows the terrain, each planning turn, the model's reasoning and the orders.
+
+Step 3. First test
+  - Keep "dry_run": true in config.json for the first test. The model is queried and its
+    orders are logged, but nothing is sent to the game, so you can read what it would do.
+  - Set "dry_run": false to let it command the army.
+  - Add --prompts when reading a log (see "LOGS AND REPORTS") to see exactly what the model saw.
+
+If you want to rebuild the plugin yourself (dnSpy)
+  The plugin source files are C# classes in the UgcwAi namespace: Bridge, Commands, Snapshot,
+  TerrainScan, BattleResult, MissionGoals, UnitExtras, AiThoughtsPanel, plus the Runner hook (TerrainScan.Objectives must be "internal static"). In dnSpy: open Assembly-CSharp.dll,
+  right-click the namespace > Add Class (or Edit Class), paste, Compile, then File > Save Module.
+  Forgetting "Save Module" is the most common reason why changes do not appear in the game.
+  The one-line hooks to add in existing methods are:
+    - Runner.Update:      BattleResult.Init(); TerrainScan.Tick(); BattleResult.Tick();
+    - Snapshot.Build():   jobject["objectives"] = TerrainScan.Objectives();
+                          UnitExtras.WriteRoot(jobject);
+                          jobject["battleGoals"] = MissionGoals.Describe();
+                          jobject["briefing"] = MissionGoals.Briefing();
+                          and, inside the unit loop, after the "ai" line:
+                          UnitExtras.Write(unitModel, jobject2);
+    - Commands.Execute:   handles move, attack, charge, range_attack, hold, fallback, formation,
+                          gait, ammo, pause, resume and plan_done.
+
+
+CHOOSING A MODEL
+----------------
+Set "backend" in config.json. Every backend has its own block in the same file.
+
+1. "ollama"  (local, free, needs a GPU for good speed)
+   - Install Ollama (https://ollama.com), then:   ollama pull gemma4:12b
+   - config.json:  "backend": "ollama",  "ollama": { "model": "gemma4:12b", ... }
+   - The answer is constrained to the orders JSON schema, thinking is switched off, and the
+     context window is set to 16384 tokens (Ollama's default of 4096 is too small).
+   - Any other Ollama model can be used by changing "model". Prefer models that follow JSON
+     instructions well; small models tend to give very few orders and to forget rules.
+
+2. "claude_code"  (Claude, uses your Claude Pro / Max subscription, no API key)
+   - Install Claude Code:   irm https://claude.ai/install.ps1 | iex     (PowerShell)
+   - Open a new terminal, run "claude --version", then run "claude" once and log in with your
+     Claude account in the browser.
+   - Test:   claude -p "say hello"
+   - config.json:  "backend": "claude_code",  "claude_code": { "model": "sonnet", ... }
+     ("model" accepts an alias such as sonnet or opus, or a full model name.)
+   - Each planning turn is one call with a prompt of several thousand tokens. A long battle
+     can make dozens of calls and counts against your subscription's usage limits. To save
+     usage: raise "engaged_interval_s" (for example from 30 to 60), lower
+     "max_orders_per_cycle", use a cheaper model, or start with a short battle.
+   - A Claude Pro subscription does not include the Anthropic API. An API key from the
+     Claude Console is a separate product and is not supported by the current backends.
+
+3. "openai_compatible"  (LM Studio, llama.cpp server, vLLM, or a hosted OpenAI-style API)
+   - config.json:  "backend": "openai_compatible",  "openai_compatible": { "base_url": ...,
+     "model": ..., "api_key": ... }
+
+4. "placeholder"  (no model; trivial orders, to test the connection to the game)
+
+What was observed so far (one battle each, not a benchmark):
+  - gemma4:12b (Ollama): fast on a good GPU, but passive and often inconsistent.
+  - Claude (Sonnet, claude_code): coherent orders that respected the rules, about 6 seconds per
+    call, but also too passive without the server-side initiative described below.
+Compare models fairly by replaying the same mission with the same strategy.md and
+game_rules.md. The scoreboard keeps the results per model.
+
+
+MAIN FEATURES
+-------------
+Commander
+  - The model reads the battlefield as text: your units (men, morale, stamina, terrain, nearest
+    enemy, facing), the visible enemy units (fog of war applies), the terrain map, objectives and
+    their owners, and the result of its previous orders.
+  - It answers with a short reasoning (it names brigades as "Name (#id)") and a list of orders:
+    move, attack, charge, range_attack, hold, fallback, formation, gait, and ammo for artillery.
+  - Units it does not order keep being controlled by the game's own AI; it only commands
+    infantry, cavalry, artillery and skirmishers of the AI side.
+
+Rules enforced by the server (a weak model cannot break them)
+  - Routing, shattered and captured units are not commanded.
+  - No charge by a unit under 0.4 morale or 0.3 stamina, or at a beaten target.
+  - Units under half morale or half their men are pulled back to rest.
+  - A moving unit does not fire, so units already in fire range are kept shooting instead of
+    being moved around; a limited number of moves per turn once the lines are in contact.
+  - Fire lanes: a destination is shifted so that a unit does not stand in front of another
+    one's line of fire or on top of another unit.
+  - Units face the enemy when they arrive, to avoid the rear-exposure morale penalty.
+
+Tactical help in the prompt
+  - FRONT LINE PLAN: a slot for each infantry unit so the line is continuous, evenly spaced and
+    as wide as the visible enemy front.
+  - Game distances: fire at about 400 units, charge at about 200. Each unit's own current range is
+    used when the plugin reports it.
+  - CHARGE OPPORTUNITIES, FIRE LANES, FORCE BALANCE and OBJECTIVE SCORE: it attacks when stronger,
+    defends when outnumbered, and is told who owns each objective and which one to retake.
+  - STALEMATE: after 20 minutes without an objective changing hands, the prompt orders an
+    assault with the freshest brigades and gun support.
+
+Initiative (autopilot)
+  - A unit that has received an order is no longer driven by the game's AI and stands still if
+    left without orders. The server therefore gives idle units a simple order, marked "auto":
+    a charge on a beaten enemy in charge range, an advance into fire range, or a shot at the
+    nearest enemy. It never touches resting or deliberately held units and keeps about a fifth
+    of the brigades in reserve. Configurable in the "engage" block; set "enabled": false to
+    switch it off.
+
+Equipment, veterancy and ammunition
+  - EQUIP column: weapon (smoothbore, rifled, breech-loader), current range, stars, unlocked perks,
+    ammunition left, and the artillery ammunition mode.
+  - Artillery ammunition: the model can order "auto", "mixed" or "canister"; the server also
+    switches batteries to canister when enemy infantry or cavalry comes close, and back to auto.
+    Roundshot and shell are chosen by the game itself in auto mode.
+
+Editable doctrine
+  - strategy.md: the doctrine (scout, form a line, shoot, charge, exploit; cavalry, artillery,
+    morale, terrain). Edit it freely: it is re-read at every planning turn, no restart needed.
+  - game_rules.md: the specific rules of the game (unit states, fallback thresholds, charges,
+    facing, fire lanes, mission goals, equipment, ammunition). Keep the "MISSION GOALS" section
+    in line with the briefing of the mission you play.
+
+Mission goals as conditions to prevent
+  - The plugin reads the battle objectives of the mission from the game (the "Victory conditions" of
+    the briefing, with their live state) and the server turns them round for the AI: what makes the
+    human player win is what the AI must prevent. The prompt lists them in a MISSION GOALS block and
+    says which are met right now. It works for any mission, nothing to copy by hand.
+  - The battle result is taken from the game's "Battle finished" line (the player's result) and
+    cross-checked with the goals.
+
+Wearing a steady enemy down
+  - When fire does not shake a unit, the prompt proposes a plan: two expendable units charge it
+    first, then the best brigades follow while it is disordered.
+
+Artillery safety
+  - A battery standing alone in front of enemy infantry or cavalry is pulled back by the server
+    (marked auto); the prompt lists batteries at risk.
+
+Battle report, score and after-action review
+  - At the end of a battle: result, casualties and kill/death ratio, objectives, a timeline.
+  - Score: victory 3, draw 1, defeat 0 (configurable). A battle with fewer than 25 casualties in
+    total is "no contest" and earns nothing.
+  - The model then writes an assessment of its own performance and what to improve
+    (reports/assessment-<date>.md). It is advice for you: nothing is changed automatically.
+  - logs/scoreboard.json keeps the totals and a per-model breakdown.
+
+
+CONFIGURATION (config.json)
+---------------------------
+  backend                 ollama, claude_code, openai_compatible or placeholder
+  dry_run                 true: log the orders but do not send them
+  verbose                 true: print the model's raw answer; "full": also print the prompt
+  max_orders_per_cycle    upper limit of orders per turn (default 60)
+  ranges                  fire 400, charge 200 (game units, used when a unit reports no range)
+  timing                  seconds of play between two planning pauses: approach 120,
+                          closing 60, engaged 30 (pauses never count)
+  posture                 attack_ratio 1.25, defend_ratio 0.80, stalemate_minutes 20
+  engage, guard           initiative for idle units; pulling back unprotected batteries
+  ammo                    automatic canister switching for artillery
+  mission                 objectives_only: the objectives that count in this mission
+                          (default: River Dam Hill, Crossroads Hill); casualty_goal: 1.05;
+                          player_rule: the human player's winning conditions (decide the result)
+  scoring, assessment     points per result; enable/disable the end-of-battle review
+Unknown or missing keys fall back to the defaults, so you can keep a short config.json.
+
+
+LOGS AND REPORTS
+----------------
+  logs\battle-<date>.jsonl   every state, prompt, raw answer, order and event of a session
+  reports\                   battle reports and assessments
+  logs\scoreboard.json       points and casualties per battle and per model
+
+  python show_log.py                    read the latest log
+  python show_log.py --prompts          include the prompts sent to the model
+  python show_log.py --terrain          include the terrain map
+  python show_log.py logs\battle-<date>.jsonl
+
+  python rescore.py                     recompute the result of every recorded battle with the mission
+                                        rule (dry run; add --apply to write, a backup is kept)
+  python fix_scoreboard.py              dry run: shows what it would correct in the scoreboard
+  python fix_scoreboard.py --apply      writes the corrected scoreboard (with a backup; nothing is
+                                        deleted)
+
+
+TROUBLESHOOTING
+---------------
+- The server shows nothing: check that the game was started after the server, and that the
+  game log contains "[UgcwAi]" lines. If not, the DLL is not the modded one (see Step 1).
+- "TypeError ... positional arguments": the Python files come from different releases. Replace
+  all of them together and delete the __pycache__ folder.
+- No battle_end / the result stays "unknown": the DLL lacks the BattleResult hook, or the game
+  log line "Mission finished. Result=..." was not seen.
+- Code changes in dnSpy have no effect: you compiled but did not use File > Save Module, or the
+  game was updated and replaced the DLL.
+- The model times out: raise "timeout_s" of its backend. A Claude Code call needs a few seconds
+  just to start.
+- The AI stands still: check the console for "Server added N order(s)" lines and read the
+  prompts with show_log.py --prompts; adapt strategy.md and game_rules.md.
+- To go back to the normal game, restore the original Assembly-CSharp.dll.
+
+
+LIMITS
+------
+- Tested on one mission. The fire-lane geometry and some thresholds are estimates.
+- The game logs two result lines: "Mission finished" (internal, it said Defeat after a battle the
+  human player had won, so it is not used) and "Battle finished" (the player's result, used and
+  inverted for the AI). If the DLL is older than MissionGoals.cs/BattleResult.cs, the server falls
+  back to mission > player_rule in config.json, a hand-written copy of the briefing conditions.
+  Enemy casualties are only counted while the AI sees the enemy, so ratios are rough estimates.
+- Perk names are the game's asset names and may look technical.
+- The mod is unofficial and not affiliated with the developers of the game. Keep a backup of your
+  save games and of the original DLL.
+
+
+CREDITS
+-------
+Plugin architecture adapted from rome-battle-ai by Cegli865. Written with Claude (Anthropic).
+
+STRATEGIC PLAN (attack / defend / trade)
+The mod reads the mission goals from the game, inverts them for the AI and works out the cheapest way for the AI
+to win. It then picks ATTACK (take an objective the player holds), DEFEND (hold what you hold) or TRADE (the
+casualty ratio is the problem: win the exchange of fire first). Config block "plan" in config.json:
+enabled, attack_ratio (1.25, force ratio needed to attack for an objective), min_contact_minutes (20),
+min_casualties (300, a kill ratio means nothing before that), recoverable_kd (0.65). New file: goals.py
+(replace it together with planner_server.py, situation.py and prompting.py).
+
+SUPPLY WAGONS
+The AI uses its Supply wagons to rearm batteries and brigades. The plugin reports each wagon (stock, which kinds
+it feeds, area radius) and the ammunition of every unit; the model can move a wagon and switch its modes
+(artillery / infantry). The server also switches the modes on, moves a wagon behind the unit that needs ammunition
+(never within 450 units of a visible enemy) and walks an empty unit that is out of contact back to the wagon.
+Config block "supply" in config.json. New file: supply.py (replace it together with prompting.py,
+planner_server.py and equipment.py). DLL: UnitExtras.cs and Commands.cs changed (replace both classes).
+
+BATTERIES (ready / packed, fallback, smoothbore)
+The plugin reports whether each battery is ready to fire or packed (limbered). The AI knows that a move packs a
+battery up, that a fallback steps it back while it stays unlimbered, and that smoothbore guns should be brought
+close to the front (level with the infantry) while rifled guns stay back. The server turns a short backstep of a
+ready battery into a fallback, and uses a fallback instead of a move when it pulls a threatened battery back.
+Config blocks "battery" and "guard" (use_fallback, fallback_seconds). New file: battery.py. DLL: UnitExtras.cs changed.
+
+CAVALRY ROLES
+The AI keeps its cavalry in reserve behind the front (to meet enemy charges), sends it to the flanks against
+skirmishers and scouts, and uses one brigade as an early scout (first 12 minutes) to reveal the enemy layout; brigades
+with scouting perks are preferred. The server drops cavalry moves that end in front of the line near enemy
+infantry. Config block "cavalry". New file: cavalry.py (replace it with prompting.py, planner_server.py, config.json).
+
+NEW IN THIS VERSION
+- Objectives: when the mission goals name the objectives to hold, only those objectives are shown to the AI. A stale
+  mission.objectives_only list (from another map) is ignored with a warning. Set it to [] in config.json.
+- Cavalry ride-down: fresh cavalry charges isolated skirmishers / dismounted troops (config "cavalry": ride_*).
+- Limber order: {"cmd":"limber","id":N,"value":"unpack"|"pack"}; packed batteries that are not marching are unpacked
+  by the server. DLL: UnitExtras.cs and Commands.cs changed (replace both classes).
+- Plan: TREND line and stop-loss (plan.stop_loss_ratio, plan.stop_loss_min); a draw fallback when a win is out of reach
+  (plan.draw_ratio).
+- Report: routing enemy units now count as broken.
+
+SUPPLY WAGON SAFETY
+The server remembers the last seen position of every enemy unit (15 minutes by default) and refuses any wagon trip whose
+straight route passes within supply.path_clear (450) of a visible or last-known enemy, or longer than supply.max_trip
+(1500). The prompt marks such units "ROUTE UNSAFE". Replace supply.py, prompting.py, planner_server.py, config.json.
+
+RANGES READ FROM THE GAME
+The plugin now sends each unit's own charge range (UnitModel.chargeRange, set from Rebalance.Methods.GetChargeRange) and,
+for cavalry, its spotting range. The server uses the unit's value instead of ranges.charge (set ranges.use_unit_charge to
+false to go back to the config value). The canister range is 500 in this game version (Rebalance.Methods.GetCanisterRange);
+ammo.canister_range is only a fallback. DLL: UnitExtras.cs changed. Python: equipment.py, prompting.py, autopilot.py, config.json.
+
+BRIGADE SIZE AND THE LINE
+The plugin sends each unit's width (UnitModel.lineFormationSize). The front line slots, the stacking check and the fire
+lanes use it, so large brigades (Rebalance very large size, up to 6000 men) are kept apart by their real width. Without
+the reported width the server estimates it from the brigade's full strength. Thresholds in men (plan.min_casualties,
+plan.stop_loss_min) are raised automatically to 2 % and 1 % of the army's starting strength. DLL: UnitExtras.cs changed.
+Python: equipment.py, prompting.py, planner_server.py.
+
+ATTACK PLAN, MORALE DISCIPLINE, RESERVE, STOP-LOSS (2026-11-09 evening)
+- assault.py (new): when the plan is ATTACK on an objective the player holds, the server picks an assault group (the freshest
+  45 % of the infantry, 2 to 5 brigades), walks it to a staging area, launches it on the defenders when most of it has
+  arrived and the local strength is at least 0.6 (or after 15 min), and releases it after a loss of 35 % of its men.
+  The prompt shows the BRIEFING, the ASSAULT PLAN and the plan the model wrote ("plan" field of its answer, kept by the server).
+  config.json: "assault".
+- relief.py (new): brigades in contact under 0.5 morale are pulled back (fallback; retreat move under 0.3), replaced by a
+  fresh brigade the same turn, and left alone until morale 0.65; idle healthy brigades are committed to the line from
+  minute 20 (8 when attacking), one stays until minute 40. config.json: "relief".
+- goals.py / plan: an objective the player holds and the AI must take means ATTACK by default (plan.attack_by_default); TRADE
+  only as a stop-loss (plan.stop_loss_ratio 1.6, stop_loss_min 100 men, lasts at least stop_loss_hold_s = 480 s), or when the
+  force ratio is under plan.min_attack_ratio (0.7) during the first plan.build_up_minutes (25) in contact.
+- battery.py: a battery still packed after 2 unpack orders gets "unpack_force"; the server prints the plugin's state dump.
+- DLL: UnitExtras.cs (SetLimber with unpack_force + LimberInfo, sent as "limberInfo"), MissionGoals.cs (Briefing()),
+  TerrainScan.cs (objective description, priority, startSide). New line in Snapshot.Build():
+      jobject["briefing"] = MissionGoals.Briefing();
+  Compile UnitExtras and MissionGoals before Commands. Python: assault.py, relief.py, goals.py, battery.py, autopilot.py,
+  prompting.py, planner_server.py, config.json, game_rules.md, strategy.md.
+
+TOKEN SAVINGS (v0.1.1-beta, config.json "economy")
+- Every model call prints its tokens (input, cache read, cache written, output) and the battle report gives the total,
+  the number of model calls and of quiet turns skipped ("tokens", "llm_calls", "quiet_turns_skipped").
+- static_roster: the fixed equipment of your brigades (weapon, stars, perks, charge range, spotting) is given once in
+  the system prompt (YOUR BRIGADES), which stays identical during a battle and is cached by Claude; the unit table then
+  only shows what changes (range, ammunition, battery state, width).
+- Explanations that used to be repeated in every turn are in READING THE STATE (system prompt).
+- game_rules.md and strategy.md were merged and cleaned up (duplicates removed, outdated stop-loss and TRADE rules
+  fixed, the River-crossing-only mission notes removed: the MISSION GOALS block read from the game replaces them).
+  The previous versions are in the "old" folder.
+- skip_quiet_turns: no model call when nothing changed that needs a decision (no new enemy, no unit status change, no
+  morale drop of morale_drop or more, losses under loss_men, no event, plan unchanged); at most max_consecutive_skips in
+  a row and never more than max_gap_s seconds of battle without a call. The server automatons still run those turns.
+  Raise morale_drop (0.15 or 0.2) to skip more turns in heavy fighting.
+
+SHORT AND LARGE BATTLES (v0.1.2-beta, config.json "scale")
+- The server counts your combat units (infantry, cavalry, artillery, skirmishers) and prints "Battle size: small" or
+  "large" at the first planning turn. From large_threshold (40) the battle is "large" and the prompt is compacted:
+  units farther than detail_radius (1200) from every visible enemy get a short line (position, men, morale, stamina,
+  nearest enemy, range and ammunition); the terrain along the way to the enemy is given only within route_radius (800);
+  enemy terrain and equipment only within enemy_detail_radius (900) of your units, for the max_enemy_detail (30)
+  nearest; CHARGE OPPORTUNITIES and FIRE LANES are capped (8 and 6 lines); last turn's orders are listed by id only.
+- Short battles keep every detail. Force a size with "force": "small" or "large". The battle report records it
+  ("battle_size").
+- Estimated prompt per model call (synthetic test, 25 vs 60 units of yours): see the 2026-11-10 notes; the real
+  numbers are printed by the server after each call (tokens) and in the battle report.

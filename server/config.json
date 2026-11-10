@@ -1,0 +1,232 @@
+{
+  "backend": "claude_code",
+  "max_orders_per_cycle": 60,
+  "dry_run": true,
+  "verbose": true,
+  "terrain": {
+    "in_prompt": true,
+    "print_map": true,
+    "overview_cols": 60,
+    "height_cols": 40,
+    "show_heights": true,
+    "show_rules": true
+  },
+  "ranges": {
+    "fire": 500,
+    "charge": 500,
+    "use_unit_charge": true
+  },
+  "timing": {
+    "approach_interval_s": 120,
+    "closing_interval_s": 60,
+    "engaged_interval_s": 60,
+    "contact_distance": 600
+  },
+  "ollama": {
+    "base_url": "http://localhost:11434",
+    "model": "gemma4:12b",
+    "timeout_s": 75,
+    "temperature": 0.2,
+    "num_ctx": 16384,
+    "num_predict": 3072,
+    "think": false,
+    "use_schema": true,
+    "keep_alive": "30m"
+  },
+  "openai_compatible": {
+    "base_url": "http://localhost:1234/v1",
+    "model": "your-model-name",
+    "api_key": "",
+    "timeout_s": 75,
+    "temperature": 0.3,
+    "max_tokens": 4096,
+    "json_mode": false,
+    "reasoning_effort": null
+  },
+  "claude_code": {
+    "command": "claude",
+    "model": "sonnet",
+    "effort": null,
+    "timeout_s": 150,
+    "workdir": "claude_workdir",
+    "extra_args": []
+  },
+  "mission": {
+    "objectives_only": [],
+    "casualty_goal": 1.05,
+    "player_rule": {
+      "hold_all": true,
+      "hold_min": 1,
+      "casualty_ratio": 1.05,
+      "draw_ratio": 1.1
+    },
+    "trust_game_result": false
+  },
+  "assessment": {
+    "enabled": true
+  },
+  "posture": {
+    "enabled": true,
+    "attack_ratio": 1.25,
+    "defend_ratio": 0.8,
+    "local_radius": 800,
+    "stalemate_minutes": 20
+  },
+  "engage": {
+    "enabled": true,
+    "max_per_turn": 4,
+    "max_charges": 2,
+    "trigger_distance": 650,
+    "reserve_share": 0.2,
+    "charge_target_morale": 0.5,
+    "charge_min_morale": 0.6,
+    "charge_min_stamina": 0.5,
+    "charge_min_strength": 0.6
+  },
+  "ammo": {
+    "auto": true,
+    "canister_range": 500,
+    "release_factor": 1.6
+  },
+  "guard": {
+    "enabled": true,
+    "min_escape": 150,
+    "use_fallback": true,
+    "fallback_seconds": 15.0
+  },
+  "plan": {
+    "enabled": true,
+    "attack_ratio": 1.25,
+    "min_contact_minutes": 20,
+    "min_casualties": 300,
+    "recoverable_kd": 0.65,
+    "stop_loss_ratio": 1.6,
+    "stop_loss_min": 100,
+    "draw_ratio": 0.8,
+    "stop_loss_hold_s": 480,
+    "attack_by_default": true,
+    "min_attack_ratio": 0.7,
+    "build_up_minutes": 25
+  },
+  "overlay": {
+    "enabled": true,
+    "max_chars": 260
+  },
+  "supply": {
+    "enabled": true,
+    "need_artillery": 0.5,
+    "need_infantry": 0.35,
+    "critical": 0.2,
+    "default_range": 120.0,
+    "stand_share": 0.5,
+    "safe_distance": 450.0,
+    "min_stock": 0.05,
+    "auto_flags": true,
+    "path_clear": 450.0,
+    "max_trip": 1500.0,
+    "memory_s": 900.0
+  },
+  "battery": {
+    "enabled": true,
+    "backstep_max": 200.0,
+    "fallback_seconds": 12.0,
+    "advance_share": 0.85,
+    "cover_gap": 60.0,
+    "default_range": 700.0
+  },
+  "cavalry": {
+    "enabled": true,
+    "recon_minutes": 12.0,
+    "recon_units": 1,
+    "recon_keep_away": 500.0,
+    "front_gap": 40.0,
+    "exposure_radius": 700.0,
+    "scout_words": [
+      "scout",
+      "recon",
+      "vision",
+      "sight",
+      "spot",
+      "explor",
+      "observ",
+      "eagle",
+      "hawk"
+    ],
+    "ride_down": true,
+    "ride_max_distance": 1800.0,
+    "ride_isolation": 350.0,
+    "ride_path_clear": 250.0,
+    "ride_max_ratio": 1.3,
+    "ride_min_morale": 0.7,
+    "ride_min_stamina": 0.5,
+    "ride_min_strength": 0.6,
+    "ride_auto": true
+  },
+  "assault": {
+    "enabled": true,
+    "launch_minutes": 6.0,
+    "group_share": 0.45,
+    "group_min": 2,
+    "group_max": 5,
+    "min_morale": 0.65,
+    "min_strength": 0.5,
+    "stage_distance": 0.0,
+    "stage_radius": 130.0,
+    "stage_timeout_s": 420.0,
+    "ready_share": 0.7,
+    "launch_min_ratio": 0.6,
+    "max_wait_s": 900.0,
+    "defender_radius": 650.0,
+    "max_orders_per_turn": 5,
+    "abort_loss_share": 0.35,
+    "abort_pause_s": 600.0,
+    "briefing_chars": 700
+  },
+  "relief": {
+    "enabled": true,
+    "retreat_morale": 0.5,
+    "retreat_men": 0.4,
+    "critical_morale": 0.3,
+    "contact_distance": 650.0,
+    "fallback_seconds": 15.0,
+    "retreat_distance": 300.0,
+    "cooldown_s": 90.0,
+    "rested_morale": 0.65,
+    "replace": true,
+    "max_replacements": 2,
+    "replacement_min_morale": 0.7,
+    "replacement_min_strength": 0.6,
+    "replacement_max_distance": 1300.0,
+    "reserve_commit": true,
+    "commit_minutes": 20.0,
+    "commit_minutes_attack": 8.0,
+    "release_minutes": 40.0,
+    "reserve_min_distance": 700.0,
+    "reserve_min_morale": 0.7,
+    "reserve_min_strength": 0.6,
+    "reserve_max_per_turn": 2
+  },
+  "economy": {
+    "static_roster": true,
+    "skip_quiet_turns": true,
+    "max_consecutive_skips": 1,
+    "max_gap_s": 150,
+    "morale_drop": 0.1,
+    "loss_men": 100,
+    "loss_share": 0.01,
+    "log_usage": true
+  },
+  "scale": {
+    "force": null,
+    "large_threshold": 40,
+    "large": {
+      "detail_radius": 1200,
+      "route_radius": 800,
+      "enemy_detail_radius": 900,
+      "max_enemy_detail": 30,
+      "max_charge": 8,
+      "max_lanes": 6,
+      "compact_orders": true
+    }
+  }
+}

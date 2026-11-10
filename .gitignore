@@ -1,0 +1,31 @@
+# Game files must never be committed (the game's Assembly-CSharp.dll, Unity assemblies, saves)
+*.dll
+*.exe
+*.pdb
+Managed/
+
+# Runtime output of the planner server
+server/logs/
+server/reports/
+server/claude_workdir/
+logs/
+reports/
+claude_workdir/
+scoreboard*.json
+
+# Local settings (copy server/config.json to keep your own values out of git if you like)
+server/config.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editors / OS
+.vs/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
