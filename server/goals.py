@@ -100,13 +100,17 @@ PLAN_DEFAULTS = {
     "min_contact_minutes": 20,   # before this, a bad casualty ratio is still recoverable
     "draw_ratio": 0.8,           # force ratio needed to attack for a DRAW (1 point) when a win is out of reach
     "stop_loss_ratio": 1.6,      # men lost in the last 10 min above this times the enemy's: stop-loss
-    "stop_loss_min": 100,        # ...and at least this many men lost in those 10 minutes
+    "stop_loss_min": 100,        # ...and at least this many men lost in those 10 minutes (floor)...
+    "stop_loss_share": 0.01,     # ...or this share of the AI army (all men that took part), whichever is larger
     "stop_loss_hold_s": 480,     # once triggered, the stop-loss (TRADE) lasts at least this long, then the attack resumes
     "force_stop_loss": False,    # set by the server while a triggered stop-loss is still running
+    "stop_loss_min_contact": 5,  # minutes in contact before the stop-loss can trip (losses to unseen fire before
+                                 # contact are hidden troops to find, not a fire fight to stop)
     "attack_by_default": True,   # an objective the player holds and the AI must take = attack, not trade fire
     "min_attack_ratio": 0.7,     # ...unless the force ratio is below this (then build up first)
     "build_up_minutes": 25,      # ...for at most this long in contact: after that the attack goes ahead anyway
-    "min_casualties": 300,       # below this many men lost (both sides) a kill ratio means nothing yet
+    "min_casualties": 300,       # floor; the real threshold is the larger of this and min_casualties_share x army
+    "min_casualties_share": 0.02,       # below this many men lost (both sides) a kill ratio means nothing yet
     "recoverable_kd": 0.65,      # estimated kill/death under this after that time = far behind
 }
 
@@ -342,12 +346,22 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
                    "in good ground with a continuous line, keep the trades at least even, and do not take risks "
                    "that would cost the ratio. Counter-attack only shaken units.")
     stop_loss = False
+    hold_launch = False
     if trend is not None:
         t_own, t_foe = trend
         lines.append(f"  TREND (last 10 min): you lost {t_own:.0f} men, the enemy lost {t_foe:.0f} (seen).")
-        tripped = bool(cfg.get("force_stop_loss")) or (t_own >= cfg["stop_loss_min"] and t_own > cfg["stop_loss_ratio"] * max(t_foe, 1.0))
+        in_fight = minutes_in_contact >= cfg.get("stop_loss_min_contact", 5) and t_foe > 0
+        tripped = bool(cfg.get("force_stop_loss")) or (in_fight and t_own >= cfg["stop_loss_min"]
+                                                       and t_own > cfg["stop_loss_ratio"] * max(t_foe, 1.0))
         stop_loss = tripped
-        if tripped and mode != "TRADE":
+        if tripped and mode == "ATTACK":
+            # An attack keeps its plan: the assault group goes on staging, only its launch waits for the pause.
+            hold_launch = True
+            posture += (" STOP-LOSS PAUSE: the last 10 minutes cost more than " + f"{cfg['stop_loss_ratio']:.1f}x the enemy's "
+                        "losses. Keep staging the assault group out of fire and at full strength, rotate out brigades under "
+                        "0.6 morale, win the fire fight with the artillery; the launch waits for the pause to end (a few "
+                        "minutes). Never use the pause as a reason to stop preparing the attack.")
+        elif tripped and mode != "TRADE":
             mode = "TRADE"
             posture = ("TRADE (stop-loss): you are losing more than " + f"{cfg['stop_loss_ratio']:.1f}x the enemy's men over the last 10 minutes. "
                        "Stop all advances, rotate out every brigade under 0.6 morale, hold good ground, concentrate fire and "
@@ -358,5 +372,5 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
                         "no advances, rotate out brigades under 0.6 morale.")
     lines.append(f"  AMBITION: {mode}. " + posture)
     return {"mode": mode, "posture": posture, "lines": lines, "route": [atoms[k]["text"] for k in best],
-            "deficit": deficit, "behind_far": behind_far, "stop_loss": stop_loss,
+            "deficit": deficit, "behind_far": behind_far, "stop_loss": stop_loss, "hold_launch": hold_launch,
             "targets": [n[2] for n in need_cap if n[2] is not None]}

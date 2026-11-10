@@ -1,0 +1,9 @@
+Logistics, MoveSpeed|.75|*|All, RotationSpeed|4|*|All
+Physical_training, Reload|-.075|*|All, CanisterDamage|.2|*|All
+Discipline, SolidAndShellDamage|.25|*|All, EffectiveRange|.05|*|All
+Tactical_training, Cover|1|*|All, CanisterDamage|.2|*|All
+Gunnery_training, Accuracy|.15|*|All, Spotting|.5|*|All
+Shooting_training, SolidAndShellDamage|.2|*|All, Stealth|.5|*|All
+Short_range_training, Reload|-.1|*|All, MoveSpeed|.25|*|All 
+Long_range_training, Reload|.1|*|All, EffectiveRange|.1|*|All
+

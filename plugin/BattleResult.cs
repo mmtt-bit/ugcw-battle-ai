@@ -87,6 +87,7 @@ namespace UgcwAi
                 msg["battleGoals"] = MissionGoals.Describe();          // final state of the briefing goals
                 Bridge.Send(msg.ToString(Newtonsoft.Json.Formatting.None));
                 Debug.Log("[UgcwAi] battle_end sent: " + msg["result"] + " (" + msg["resultKind"] + ")");
+                AiThoughtsPanel.Clear();                               // the end screen must not show the AI's last thought
             }
             catch (Exception e) { Debug.LogWarning("[UgcwAi] battle_end failed: " + e.Message); }
         }

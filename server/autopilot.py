@@ -17,8 +17,10 @@ from prompting import (DEAD_STATUSES, FIRING_KINDS, MELEE_KINDS, needs_rest, nea
 
 DEFAULT_ENGAGE = {
     "enabled": True,
-    "max_per_turn": 4,          # orders added per turn (advances and shooting orders together)
-    "max_charges": 2,           # charges added per turn
+    "max_per_turn": 4,          # orders added per turn (advances and shooting orders together), floor...
+    "per_turn_share": 0.06,     # ...or this share of your combat units, whichever is larger
+    "max_charges": 2,           # charges added per turn, floor...
+    "charges_share": 0.03,      # ...or this share of your combat units
     "trigger_distance": 650,    # advance on an enemy this close that is out of fire range
     "reserve_share": 0.2,       # share of the idle brigades that is never sent forward
     "charge_target_morale": 0.5,  # auto-charge only enemies below this morale (or half strength)
@@ -73,7 +75,10 @@ def engage_orders(state, orders, ranges, cfg, last_cmds=None, pending_moves=None
             and not _busy(u, last_cmds, live_ids, pending_moves, foes_by_id)]
     if not idle:
         return []
-    budget = min(int(cfg["max_per_turn"]), int(len(idle) * (1.0 - float(cfg["reserve_share"])) + 0.999))
+    n_combat = sum(1 for x in mine if x["kind"] in ("Infantry", "Cavalry", "Artillery", "Skirmish"))
+    max_turn = max(int(cfg["max_per_turn"]), int(round(float(cfg.get("per_turn_share", 0.0)) * n_combat)))
+    max_charges = max(int(cfg["max_charges"]), int(round(float(cfg.get("charges_share", 0.0)) * n_combat)))
+    budget = min(max_turn, int(len(idle) * (1.0 - float(cfg["reserve_share"])) + 0.999))
     added, charges = [], 0
     for u in sorted(idle, key=lambda x: (nearest(x, live) or (None, 1e9))[1]):
         if len(added) >= budget:
@@ -86,7 +91,7 @@ def engage_orders(state, orders, ranges, cfg, last_cmds=None, pending_moves=None
         in_charge = [e for e in live if math.hypot(e["x"] - u["x"], e["z"] - u["z"]) <= unit_charge_range(u, ranges)]
         beaten = [e for e in in_charge
                   if e["morale"] < float(cfg["charge_target_morale"]) or _share(e) < 0.5]
-        if (beaten and charges < int(cfg["max_charges"]) and u["kind"] in MELEE_KINDS
+        if (beaten and charges < max_charges and u["kind"] in MELEE_KINDS
                 and u["morale"] >= float(cfg["charge_min_morale"])
                 and u["fatigue"] >= float(cfg["charge_min_stamina"])
                 and _share(u) >= float(cfg["charge_min_strength"])):
@@ -94,6 +99,8 @@ def engage_orders(state, orders, ranges, cfg, last_cmds=None, pending_moves=None
             added.append({"cmd": "charge", "id": u["id"], "target": target["id"], "auto": True})
             charges += 1
             bump("auto charges (idle unit next to a beaten enemy)")
+        elif u["kind"] == "Cavalry" and u.get("mount") in (None, "mounted"):
+            continue                                   # mounted cavalry only charges: no carbine duels, no advances
         elif dist <= fire:
             added.append({"cmd": "range_attack", "id": u["id"], "target": foe["id"], "auto": True})
             bump("auto range_attack (idle unit in fire range)")

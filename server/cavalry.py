@@ -6,6 +6,8 @@ skirmishers and scouts, and in the first minutes one brigade may scout to find t
 """
 import math
 
+import perks as perks_mod
+
 DEFAULT_CAVALRY = {
     "enabled": True,
     "recon_minutes": 12.0,       # the scouting window at the start of the battle
@@ -22,6 +24,10 @@ DEFAULT_CAVALRY = {
     "ride_min_stamina": 0.5,
     "ride_min_strength": 0.6,    # share of its men left
     "ride_auto": True,           # the server orders the charge when the model leaves the cavalry idle
+    "ride_woods_clear": 250.0,  # no ride-down on a target this close to woods (hidden support, slow ground)
+    "ride_max_slow_share": 0.3,  # nor through a path more than this share on slow ground
+    "ride_auto_max": 2,         # automatic ride-downs per cavalry brigade...
+    "ride_auto_window_s": 600,  # ...within this many seconds
     "scout_words": ["scout", "recon", "vision", "sight", "spot", "explor", "observ", "eagle", "hawk"],
 }
 
@@ -42,8 +48,19 @@ def _d(a, b):
 
 
 def scout_perks(u, cfg):
+    """Perks that help scouting. When the Rebalance bonus files give the perk's effects, only the effects count
+    (spotting / stealth up): J&P's "Recon_course" is a charge and speed perk despite its name. The name words
+    (cfg "scout_words") are the fallback for perks whose effects are unknown (base game, other mods)."""
     words = [w.lower() for w in cfg["scout_words"]]
-    return [p for p in (u.get("perks") or []) if any(w in str(p).lower() for w in words)]
+    out = []
+    for p in (u.get("perks") or []):
+        effects = perks_mod.effects_of(u.get("kind"), str(p))
+        if effects:
+            if any(e[0] in ("Spotting", "Stealth") and e[1] > 0 for e in effects):
+                out.append(p)
+        elif any(w in str(p).lower() for w in words):
+            out.append(p)
+    return out
 
 
 def scouts(state, cfg):
@@ -68,7 +85,10 @@ def front_distance(mine, enemy):
 
 
 def exposed_move(me, x, z, state, cfg):
-    """True when a cavalry move to (x, z) ends in front of the line, near enemy infantry."""
+    """True when a cavalry move to (x, z) ends in front of the line, near enemy infantry.
+    Dismounted cavalry fights like infantry and may stand in the line."""
+    if me.get("mount") in ("dismounted", "dismounting"):
+        return False
     mine, foes = _split(state)
     point = {"x": x, "z": z}
     for e in foes:
@@ -122,6 +142,16 @@ def _seg_dist(p, a, b):
     return math.hypot(p["x"] - (a["x"] + t * dx), p["z"] - (a["z"] + t * dz))
 
 
+TERRAIN = None          # TerrainMap of the battle, set by the planner (set_terrain)
+_AUTO_RIDES = {}        # cavalry id -> battle times of its automatic ride-downs
+
+
+def set_terrain(terrain):
+    global TERRAIN
+    TERRAIN = terrain
+    _AUTO_RIDES.clear()
+
+
 def ride_down_targets(state, cfg=None):
     """[(cavalry, target, distance)] best target per fresh cavalry brigade: enemy skirmishers or dismounted
     troops that stand apart from steady infantry and guns, with a clear ride to them."""
@@ -134,7 +164,7 @@ def ride_down_targets(state, cfg=None):
     targets = [e for e in foes if e["kind"] == "Skirmish"]
     out = []
     for c in mine:
-        if (c["kind"] != "Cavalry" or c["morale"] < cfg["ride_min_morale"] or c["fatigue"] < cfg["ride_min_stamina"]
+        if (c["kind"] != "Cavalry" or c.get("mount") not in (None, "mounted") or c["morale"] < cfg["ride_min_morale"] or c["fatigue"] < cfg["ride_min_stamina"]
                 or c["hp"] < cfg["ride_min_strength"] * c["maxHp"] or str(c.get("status") or "") not in ("",)):
             continue
         best = None
@@ -146,6 +176,11 @@ def ride_down_targets(state, cfg=None):
                 continue
             if any(_seg_dist(e, c, t) < float(cfg["ride_path_clear"]) for e in steady_inf):
                 continue
+            if TERRAIN is not None and hasattr(TERRAIN, "nearest_hiding_place"):
+                if TERRAIN.nearest_hiding_place(t["x"], t["z"], float(cfg["ride_woods_clear"])):
+                    continue                           # woods next to it may hide its support; slow ground
+                if TERRAIN.path_profile(c["x"], c["z"], t["x"], t["z"], "Cavalry")[2] > float(cfg["ride_max_slow_share"]):
+                    continue
             key = (t["morale"] + d / 4000.0)       # shaken and near first
             if best is None or key < best[0]:
                 best = (key, t, d)
@@ -177,6 +212,11 @@ def ride_down_orders(state, orders, cfg=None, last_cmds=None, stats=None):
         last = (last_cmds or {}).get(c["id"])
         if last and last.get("cmd") == "charge" and last.get("target") == t["id"]:
             continue                                   # already on its way
+        now = float(state.get("time", 0.0))
+        recent = [x for x in _AUTO_RIDES.get(c["id"], []) if now - x < float(cfg["ride_auto_window_s"])]
+        if len(recent) >= int(cfg["ride_auto_max"]):
+            continue                                   # do not wear the cavalry out with charge after charge
+        _AUTO_RIDES[c["id"]] = recent + [now]
         out.append({"cmd": "charge", "id": c["id"], "target": t["id"], "auto": True})
         taken.add(t["id"])
         if stats is not None:

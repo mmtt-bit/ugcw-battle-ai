@@ -2,11 +2,32 @@ Game rules for the AI commander (Ultimate General: Civil War). Edit freely: re-r
 They hold the rules of the game and what the server enforces; doctrine is in strategy.md. These rules win.
 (The previous, longer version is kept in old/game_rules.2026-11-09.md.)
 
+HIDDEN TROOPS AND SLOW GROUND
+- Woods, dense woods and wheat (not fortifications) can hide enemy troops that see and shoot you while you cannot see
+  them (stealth: dense forest x5, forest x1, wheat x0.5 in the TERRAIN EFFECTS), and camouflage perks can make enemy
+  units hard or impossible to spot even in the open. Losses while no visible enemy stands within the unit's own fire
+  range are listed under UNSEEN FIRE, for every kind of unit. Never leave units, above all cavalry, standing in the open within reach of unscouted woods:
+  scout them with skirmishers, shell them with artillery, or move out of range.
+- Under fire you cannot answer, never stand still. How to answer depends on your doctrine (DOCTRINE line under UNSEEN FIRE) and on the
+  unit: an aggressive general charges a skirmisher or shaken enemy in reach with fresh infantry or mounted cavalry
+  and advances fresh infantry on the shooters; a balanced one closes in only on a visible enemy just out of range;
+  a careful one, and any tired unit, artillery or wagon, opens the distance. The plugin's UNSEEN reflex and the
+  server do this for units you leave without orders.
+- Long moves are sent by the server as routes along the fastest ground and the roads (waypoints, facing the next leg
+  at each bend): give the destination, not the waypoints. Minutes in TEMPO count from the start of this phase.
+- Cover depends on the ground too (TERRAIN EFFECTS, Cover x Damage): open grass 0.5, wheat about 1.0, woods 1.2,
+  fortifications 1.6. Trade fire from wheat, the edge of woods or fortifications, never from open grass next to
+  them; the server moves idle units under fire to such a spot nearby when it keeps the enemy in range.
+- Movement speed depends on the ground (TERRAIN EFFECTS): forest about 2/3, dense forest 3/5, scrub under 1/2, mud
+  1/3. Do not march artillery or wagons through woods (the server moves their destinations to open ground). Launch
+  charges and assaults over open ground and from close: a charge through woods or from far arrives exhausted (the
+  server turns such charges into attacks). Choose approach routes along open ground and roads.
+
 UNIT STATES
 - Routing units flee and ignore orders until they rally: never order them, never send others to "save" them.
 - Shattered and captured units are out of the fight: no orders, do not count them in the line.
 - A unit missing from YOUR UNITS is gone. Only Infantry, Cavalry, Artillery and Skirmish take combat orders;
-  Supply wagons take only move and supply; never order a General.
+  Supply wagons take only move and supply; Generals take only move (see GENERALS below).
 - An attack, range_attack or charge target must be a visible enemy. Fog of war: no enemy seen does not mean none.
 
 SCORING
@@ -22,7 +43,12 @@ PLAN AND POSTURE
     plan (ASSAULT PLAN below). Not clearly stronger: concentrate on one point, pin the rest with fire.
   - DEFEND: your conditions are met or the objective is out of reach. Hold what you own with a continuous line on
     good ground, let the enemy come into fire range, charge only shaken units.
-  - TRADE: a pause, never the plan for the whole battle. It comes from the stop-loss (you lost more than 1.6 times
+  - Phases: some battles (Shiloh) start as a series of smaller maps; the goals then name the objectives of the whole
+  battle. When those are not on this map, the plan targets this map's objective (PHASE OBJECTIVE): take it before the
+  phase ends.
+- Time: you are not told when the battle or the phase ends. Every minute you wait, the defender digs in and
+  reinforces: stage early and launch as soon as the group is ready; with a clear local superiority, launch at once.
+- TRADE: a pause, never the plan for the whole battle. It comes from the stop-loss (you lost more than 1.6 times
     the enemy's men over the last 10 minutes, TREND line) and lasts at least 8 minutes: stop advances, rotate out
     brigades under 0.6 morale, hold good ground, win the fire fight. Then the attack resumes.
   - Fallback line: when a win on casualties is out of reach, taking the objective still turns a defeat into a draw.
@@ -123,6 +149,13 @@ CAVALRY
   skirmishers or dismounted troops standing apart from steady infantry and guns (RIDE-DOWN OPPORTUNITIES): charge
   from where it stands, chain the next isolated target, then return to the reserve. This has routed such units at
   little cost. The server orders it when the cavalry is idle.
+- Mounted or dismounted (EQUIP; like a battery's limbered / unlimbered): {"cmd":"mount","id":N,"value":"dismount"}
+  puts carbine cavalry on foot, "mount" puts it back in the saddle. Dismounted, it fights like a skirmishing infantry
+  line with its carbines (better from cover, perks such as Mounted_infantry and the dismounted range bonus of
+  Endurance_course), but it is slow and cannot charge, scout or ride down: mount it before any of those, and allow
+  the time the change takes. Dismount to hold a wood, a wall, a ford or an objective, or to add fire to a thin
+  sector; never dismount in the open in front of steady infantry or within reach of enemy cavalry. Shock (sabre)
+  cavalry cannot dismount ("cannot dismount"), nor can any cavalry inside a fortification.
 - Scouting: in the first 12 minutes one cavalry brigade (the CAVALRY block names it, preferring scouting perks) may
   ride along a flank to find the enemy, staying 500+ from enemy infantry, then return.
 
@@ -132,12 +165,34 @@ EQUIPMENT, STARS AND PERKS (the YOUR BRIGADES roster and the EQUIP column)
   range fires first, so do not walk into the other's range for nothing.
 - Rifled and fast-firing units go where a long fire fight is needed; smoothbores to assaults, flanks and charges.
   Highest-star brigades take the decisive blow; green ones (0-1 star) the quiet sector, second line or reserve.
-- Perks: shooting, reloading, range or accuracy -> firing line; charge or melee -> assault; morale or stamina -> a hot
-  sector or a long march; scouting or stealth -> skirmishers and cavalry on the flanks. Name the perk in your
-  reasoning when it decides an assignment.
+- Perks: the PERKS block (end of these rules) gives the exact effect of every perk for each unit kind, and the
+  roster shows the "perk roles" they add up to. fire -> firing line and long fire fights; assault -> assault group and
+  charges; steady -> the hottest sector; scout -> skirmish screen, flanks and early scouting; cover -> woods, walls and
+  objectives to hold; mobile -> flank marches and reserve; flexible (fast pivot) -> line ends and flanks, where a unit
+  must turn quickly to face a threat. Name the perk in your reasoning when it decides an assignment.
+- Generals: their corps perks reach only the brigades of their corps standing within their command radius (GENERALS
+  block). Move each general (move is his only order) behind the middle of his brigades, close enough for most of them
+  to stay inside that radius, and never within about 650 of a known enemy: a general lost is a corps without its
+  bonuses. When his corps moves, move him with it. The server moves an idle general that has lost most of his
+  brigades from his radius, or that an enemy comes close to, and pulls back a general move that ends too near the enemy.
 
 WEARING A STEADY ENEMY DOWN
 - Fire alone rarely shakes a fresh steady brigade, and feeding brigades into its front only gives it casualties. Pick
   one target: two expendable units (least experienced or most worn, morale 0.45+, stamina 0.4+) charge it; while it is
   engaged or wavering, the best brigades attack and charge once its morale is under 0.5; the line keeps firing on it
   (WEAR-DOWN PLAN). Pull the chargers out at half morale or half men. Not on a target already shaken: just charge it.
+
+REFLEXES (run by the game plugin between your turns, without you)
+- FACE: a unit not marching whose flank or rear is threatened by an enemy within about 350 turns to face it, unless a
+  closer enemy is already in front of it.
+- BRACE: a unit charged while marching stops and fires at the charger; fresh mounted cavalry meets a charge head on;
+  when one of your units is locked in melee, the nearest fresh infantry or mounted cavalry charges its opponent.
+- UNSEEN: a unit losing men with no visible enemy within its own fire range charges, closes in or opens the distance,
+  by the general's aggressiveness and the unit's freshness (see HIDDEN TROOPS).
+- SAFETY: a battery with enemy infantry or cavalry within canister range switches to canister and, uncovered, steps
+  back (fallback); a supply wagon or a general with an enemy too close moves away; a unit in contact whose morale falls
+  under 0.3 falls back at once.
+- They are listed under REFLEXES SINCE YOUR LAST TURN. Do not repeat what a reflex already did (do not turn a unit that
+  just turned); check that the result still fits your plan (a unit that stopped to fire may need to resume its march,
+  a counter-charging unit may need to be pulled out afterwards). Turns come about every 90 seconds while the reflexes
+  run: give each unit an order that holds until then.

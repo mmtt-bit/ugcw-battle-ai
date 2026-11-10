@@ -1,0 +1,8 @@
+Discipline_training, SmallArmsDamageMoraleImpact|-.1|*|All, MeleeDamageMoraleImpact|-.15|*|All, ChargeDamage|.2|*|All, MoveSpeed|.1|*|All
+Hourseback_riding, Spotting|.5|*|All, Accuracy|.2|*|All, Stealth|.75|*|All
+Endurance_course, Accuracy|.2|*|All, EffectiveRange|.2|*|Skirmish, Reload|-.05|*|All
+Cavalry_training, Spotting|.5|*|All, Accuracy|.2|*|All, Stealth|.75|*|All
+Shooting_training_cav, Accuracy|.3|*|All, Reload|-.05|*|All, SmallArmsDamageMoraleImpact|-.1|*|All
+Recon_course, SmallArmsDamageMoraleImpact|-.1|*|All, MeleeDamageMoraleImpact|-.05|*|All, ChargeDamage|.25|*|All, MoveSpeed|.2|*|All
+Shock_cavalry, ChargeDamage|.25|*|All, MeleeDamageMoraleImpact|-.1|*|All, MoveSpeed|.1|*|All
+Mounted_infantry, Accuracy|.25|*|All, Reload|-.1|*|All, RotationSpeed|4|*|All, Cover|.2|*|All

@@ -1,0 +1,7 @@
+Discipline_training_inf, MoveSpeed|.15|*|All, ChargeDamage|.25|*|All, Reload|-.1|*|All, MeleeDamageMoraleImpact|-.05|*|All, SmallArmsDamageMoraleImpact|-.05|*|All
+Endurance_course_inf, Accuracy|.35|*|All, Reload|-.05|*|All
+Assalt_course, MoveSpeed|.15|*|All, ChargeDamage|.25|*|All, MeleeDamageMoraleImpact|-.15|*|All, SmallArmsDamageMoraleImpact|-.15|*|All
+Firearms_course, MoveSpeed|.2|*|All, RotationSpeed|4|*|All, Reload|-.1|*|All, DetachedSize|.75|*|All
+Marksman_training, Accuracy|.35|*|All, Reload|-.05|*|All, SmallArmsDamageMoraleImpact|-.15|*|All
+Elite, MoveSpeed|.15|*|All, Reload|-.2|*|All, MeleeDamageMoraleImpact|-.15|*|All, SmallArmsDamageMoraleImpact|-.1|*|All
+Sharpshooters, Accuracy|.25|*|All, Cover|.2|*|All, Spotting|.25|*|All

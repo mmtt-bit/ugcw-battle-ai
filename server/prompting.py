@@ -2,7 +2,7 @@
 import json
 import math
 
-from equipment import AMMO_MODES, equipment_dynamic, equipment_text, unit_charge_range, unit_range, unit_width
+from equipment import AMMO_MODES, equipment_dynamic, equipment_enemy, equipment_text, unit_charge_range, unit_range, unit_width
 from battery import DEFAULT_BATTERY, battery_lines, is_ready
 from cavalry import DEFAULT_CAVALRY, cavalry_lines, exposed_move, scouts
 from supply import sanitize_supply, supply_lines
@@ -57,7 +57,7 @@ def facing_flag(u, x, z):
     if c is None:
         return ""
     if c >= 0.7:
-        return " facing enemy"
+        return ""                       # facing the enemy is the normal case: said only when it is not
     if c >= 0.2:
         return " facing obliquely"
     if c >= -0.3:
@@ -84,6 +84,19 @@ ORDERS_SCHEMA = {
     "properties": {
         "reasoning": {"type": "string"},
         "plan": {"type": "string"},
+        "assaults": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "objective": {"type": "string"},
+                    "group": {"type": "array", "items": {"type": "integer"}},
+                    "approach": {"type": "array", "items": {"type": "number"}},
+                    "launch": {"type": "string", "enum": ["auto", "now", "wait", "release"]},
+                },
+                "required": ["objective"],
+            },
+        },
         "orders": {
             "type": "array",
             "items": {
@@ -91,7 +104,7 @@ ORDERS_SCHEMA = {
                 "properties": {
                     "cmd": {"type": "string", "enum": [
                         "move", "attack", "charge", "range_attack",
-                        "hold", "fallback", "formation", "gait", "ammo", "supply", "limber"]},
+                        "hold", "fallback", "formation", "gait", "ammo", "supply", "limber", "mount"]},
                     "id": {"type": "integer"},
                     "x": {"type": "number"},
                     "z": {"type": "number"},
@@ -138,22 +151,46 @@ ORDERS ("id" is one of your unit ids, "target" is a visible enemy unit id)
 - {"cmd": "supply", "id": 12, "artillery": true, "infantry": true}   SUPPLY WAGON only: kinds it rearms
 - {"cmd": "limber", "id": 9, "value": "unpack"}   ARTILLERY only: "unpack" (ready to fire) or "pack"
 - {"cmd": "ammo", "id": 9, "value": "canister"}   ARTILLERY only: "auto", "mixed" or "canister"
-  "limber" and "ammo" do not cancel the unit's other order: they can go with it in the same turn.
+- {"cmd": "mount", "id": 9, "value": "dismount"}  CAVALRY only: "dismount" (fight on foot) or "mount"
+- {"cmd": "move", "id": 16, "x": 3900, "z": 300}  also for a GENERAL: his only order (see GENERALS)
+  "limber", "ammo" and "mount" do not cancel the unit's other order: they can go with it in the same turn.
 
 ANSWER FORMAT
 Reply with ONE JSON object and nothing else (no markdown, no code fences):
-{"reasoning": "<one or two short sentences>", "plan": "<optional attack plan>", "orders": [ <order>, ... ]}
+{"reasoning": "<one or two short sentences>", "plan": "<optional attack plan>", "assaults": [ <assault>, ... ],
+ "orders": [ <order>, ... ]}
 - "plan": only when the state shows an ASSAULT PLAN block, two to four short sentences (see the rules); the
   server keeps it and shows it back every turn, so send it again only when it changes.
+- "assaults" (optional, at most 2): YOUR MACRO COMMAND of the assaults; the server does the micro-management.
+  <assault> = {"objective": "<objective name>", "group": [ids of the brigades], "approach": [x, z],
+               "launch": "auto" | "now" | "wait" | "release"}
+  objective: which objective to take (any objective on the map, not only the one the server suggests); group: the
+  brigades that assault it, in the order you want them (omit = the server picks the nearest fit ones); approach: a
+  map point on the side the assault comes from (omit = the best approach found by the server); launch: "now" goes
+  in at once, "wait" holds it in the staging area (the server still forces it when the timer runs low), "auto"
+  leaves the timing to the server's rules, "release" disbands the group. Two assaults may not share brigades.
+  The server keeps your last "assaults" and applies it every turn: send it again only to change it; [] goes back
+  to the server's own choice.
+- Two assaults in "assaults" go in TOGETHER (the server waits until both are ready): on one objective from two
+  sides (a pincer), or on two objectives so that the player must split his attention.
+- FINAL CHARGE: with 20 minutes or less on the timer and the objective still the enemy's, the server sends every
+  fresh brigade (morale 0.7+) at it: they close to charge distance (500 over open ground, 200 through woods),
+  then all charge together (at 12 minutes left at the latest). Support it, do not order its brigades.
+- COMMAND SPLIT: you are the army commander (macro): objectives, assault groups, approach, timing, the reserve, the
+  batteries' positions and targets, flank guards, scouting. The server is your staff (micro): routes, staging spots,
+  firing positions in cover, sidesteps for fire lanes, target choice inside the group, charges together from close
+  range, pull-backs and reflexes. Do not give move/attack orders to the members of an assault group (they are
+  ignored, except fallback and short sidesteps): change the "assaults" instead.
 - In "reasoning", name units as "Name (#id)", for example "Stonewall Brigade (#614)"; orders use ids only.
-- At most __MAX_ORDERS__ orders, and at most one per unit (plus limber/ammo). An empty list is valid when nothing
+- At most __MAX_ORDERS__ orders, and at most one per unit (plus limber/ammo/mount). An empty list is valid when nothing
   needs to change.
 
 READING THE STATE (what the blocks of each turn mean)
 - MISSION GOALS: the human player's goals read from the game. What makes the player win is what you must PREVENT.
 - STRATEGIC PLAN: computed from those goals; its AMBITION (ATTACK, DEFEND, TRADE) decides attack or defend.
 - OBJECTIVE SCORE: objectives held now; the battle is won by holding more objectives, not by killing.
-- ASSAULT PLAN: your orders must serve it; the server drives the ASSAULT GROUP. FIXING FIRE targets are for the
+- ASSAULT PLAN: your orders must serve it; the server drives the ASSAULT GROUP, but a member whose line of fire is
+  blocked ("lane blocked") is not fighting: sidestep it or move the unit in its way; correct the line around it. FIXING FIRE targets are for the
   batteries and the line. WEAK SIDE is where cavalry and skirmishers go.
 - FRONT LINE "in contact": do not re-form the line; stand and fire (hold, attack, range_attack), charge shaken
   enemies in charge range, move only units out of fire range or whose fire is blocked (FIRE LANES).
@@ -161,8 +198,32 @@ READING THE STATE (what the blocks of each turn mean)
 - CHARGE OPPORTUNITIES: your infantry or cavalry with an enemy in charge range; the weakest enemy in reach.
 - RIDE-DOWN OPPORTUNITIES: fresh cavalry and enemy skirmishers or dismounted troops apart from steady infantry.
 - CAVALRY: keep it behind the front line; it is not for frontal attacks on steady infantry.
-- BATTERIES: ready = unlimbered and able to fire; packed = limbered, cannot fire until unlimbered; a MOVE packs a
+- BATTERIES: ready = unlimbered and able to fire; packed = limbered, cannot fire until unlimbered (limber order,
+  value unpack; the server unpacks a battery that is not marching); a MOVE packs a
   battery, a FALLBACK steps it back and keeps it unlimbered.
+- Cavalry EQUIP "mounted" / "DISMOUNTED" (or "dismounting", "mounting"): the cavalry's mode, like a battery's;
+  "cannot dismount" = shock cavalry or in a fortification.
+- Unit table: positions are rounded to 10; "men" is one number when the unit is at full strength, "now/max"
+  otherwise. In EQUIP, nothing written = full ammunition, ammo mode auto, cavalry mounted. Your units' fixed
+  equipment is in YOUR BRIGADES (system prompt); enemy EQUIP gives the bore, stars and perks.
+- Facing (unit table): nothing written = the unit faces its nearest enemy; "facing obliquely", "SIDE TO ENEMY" or
+  "BACK TO ENEMY" otherwise. Units far from every enemy (not batteries) get a short line.
+- MARCHING (unit table): the unit has not finished its last move; do not re-order it unless the situation changed
+  (a new order restarts its path). At most 8 moves are accepted per turn; short sidesteps that clear a blocked line
+  of fire (FIRE LANES) do not count and are always allowed.
+- TIME LEFT: the game's battle timer in MINUTES and as a share of this phase's time (mandatory = the battle ends
+  then; recommended = suggested end). "107 minutes" is almost two hours, not one minute.
+- TEMPO (ASSAULT PLAN): the share of this phase's time already used, the launch deadline as a share, and the march
+  to the objective as a share of the phase. Used share + march share above the deadline = BEHIND SCHEDULE: hurry.
+  As a guide: objective named and plan written by 10 % of the phase, the assault group committed by 25 %, the
+  reserve by 40 %, objectives taken with a third of the time left to hold them.
+- Mounted cavalry shoots only short-range carbines: never give it attack or range_attack on a target beyond its range
+  (the server drops those); charge, scout, screen a flank, or keep it out of enemy fire.
+- UNSEEN FIRE: your units losing men while no visible enemy stands within their own fire range (hidden, camouflaged
+  or out-ranging shooters), the nearest visible enemy, the nearest woods or wheat that can hide them, and your
+  doctrine.
+- GENERALS: each general, his corps, his command radius (how far his corps bonuses reach) and how many of his
+  brigades stand inside it.
 - SUPPLY WAGONS and UNITS LOW ON AMMUNITION: a wagon rearms, by itself, the friendly units of the kinds it is
   switched on for that stand inside its area. To rearm, follow AMMUNITION AND SUPPLY WAGONS in the rules.
 - YOUR BRIGADES (below): the fixed equipment of your units for this battle. The per-turn EQUIP column then only
@@ -230,6 +291,17 @@ def nearest(unit, others):
     return best
 
 
+def _xz(u):
+    """Position rounded to 10 (the prompt does not need metre precision; fewer tokens every turn)."""
+    return f"{round(float(u['x']), -1):.0f},{round(float(u['z']), -1):.0f}"
+
+
+def _men(u):
+    """Men: '2000' for a unit at full strength, '1450/2000' otherwise."""
+    hp, mx = float(u["hp"]), float(u.get("maxHp") or u["hp"])
+    return f"{hp:.0f}" if hp >= mx - 0.5 else f"{hp:.0f}/{mx:.0f}"
+
+
 def range_flag(unit, distance, ranges):
     """Short flag telling whether the unit has an enemy in charge range or fire range."""
     if unit["kind"] in MELEE_KINDS and distance <= unit_charge_range(unit, ranges):
@@ -274,6 +346,8 @@ CLEARANCE = 70         # minimum distance between two friendly units
 SHOOTERS = ("Infantry", "Cavalry", "Skirmish")
 BLOCKERS = ("Infantry", "Cavalry", "Skirmish", "Artillery")
 MAX_MOVES_ENGAGED = 3  # at most this many move orders per turn once the lines are in fire range
+MAX_MOVES_TURN = 8     # and at most this many in any turn (re-ordering units restarts their pathing);
+                       # short sidesteps that clear a blocked line of fire are not counted
 
 
 def lane_half(w_shooter, w_blocker):
@@ -612,7 +686,7 @@ def compact_order(o):
     return txt + (" (auto)" if o.get("auto") else "")
 
 
-def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None, line_cfg=None, extra_lines=None, line_memory=None, plan_mode=None, roster=None, scale=None):
+def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None, line_cfg=None, extra_lines=None, line_memory=None, plan_mode=None, roster=None, scale=None, marching=None):
     """`scale` (large battles only, see config.json "scale") shortens the lines of the units that are far from the
     fight and caps the long lists; None gives the full detail for every unit (short battles)."""
     ranges = {**DEFAULT_RANGES, **(ranges or {})}
@@ -630,10 +704,11 @@ def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None,
         near = nearest(u, foes)
         near_txt = (f"#{near[0]['id']} at {near[1]:.0f}{range_flag(u, near[1], ranges)}"
                     if near else "none visible")
-        line = (f"{u['id']} | {u['name']} | {u['kind']} | {u['x']:.0f},{u['z']:.0f} | "
-                f"{u['hp']:.0f}/{u['maxHp']:.0f} | {u['morale']:.2f} | {u['fatigue']:.2f}")
-        if detail_r and (not near or near[1] > float(detail_r)):
-            # far from the fight: position, strength and state are enough (large battles)
+        line = (f"{u['id']} | {u['name']} | {u['kind']} | {_xz(u)} | "
+                f"{_men(u)} | {u['morale']:.2f} | {u['fatigue']:.2f}")
+        if detail_r and u["kind"] != "Artillery" and (not near or near[1] > float(detail_r)):
+            # far from the fight: position, strength and state are enough (batteries keep the full line: their
+            # terrain and reach matter at any distance)
             if unit_status(u):
                 line += f" | STATUS {unit_status(u).upper()}"
             line += f" | {near_txt}"
@@ -647,6 +722,9 @@ def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None,
         if unit_status(u):
             line += f" | STATUS {unit_status(u).upper()}"
         line += f" | {near_txt}"
+        if marching and u["id"] in marching:
+            dest = marching[u["id"]]
+            line += f" | MARCHING to {dest[0]:.0f},{dest[1]:.0f}"
         equip = equipment_text(u, roster)
         if equip:
             line += f" | EQUIP {equip}"
@@ -670,7 +748,7 @@ def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None,
             header += "; nearest first, distant ones get a short line"
         lines.append(f"VISIBLE ENEMY UNITS ({header}):")
         for u in listed:
-            line = (f"{u['id']} | {u['name']} | {u['kind']} | {u['x']:.0f},{u['z']:.0f} | "
+            line = (f"{u['id']} | {u['name']} | {u['kind']} | {_xz(u)} | "
                     f"{u['hp']:.0f} | {u['morale']:.2f}")
             if detailed is not None and u["id"] not in detailed:
                 if unit_status(u):
@@ -681,7 +759,7 @@ def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None,
                 line += f" | {terrain.name_at(u['x'], u['z'])}/{terrain.height_at(u['x'], u['z'])}"
             if unit_status(u):
                 line += f" | STATUS {unit_status(u).upper()}"
-            equip = equipment_text(u)
+            equip = equipment_enemy(u)
             if equip:
                 line += f" | EQUIP {equip}"
             lines.append(line)
@@ -754,6 +832,40 @@ def extract_plan(text):
         return ""
 
 
+def extract_assaults(text):
+    """The optional "assaults" macro command of the model answer: None when absent (keep the previous one), else a
+    list of at most 2 cleaned directives ([] = back to the server's own choice)."""
+    try:
+        start, end = text.find("{"), text.rfind("}")
+        data = json.loads(text[start:end + 1])
+    except (ValueError, AttributeError, TypeError):
+        return None
+    if not isinstance(data, dict) or "assaults" not in data:
+        return None
+    raw = data.get("assaults")
+    if not isinstance(raw, list):
+        return None
+    out, used = [], set()
+    for a in raw[:2]:
+        if not isinstance(a, dict) or not str(a.get("objective") or "").strip():
+            continue
+        d = {"objective": str(a["objective"]).strip()}
+        ids = [i for i in (_to_int(x) for x in (a.get("group") or [])) if i is not None and i not in used]
+        if ids:
+            d["group"] = ids
+            used.update(ids)
+        ap = a.get("approach")
+        if isinstance(ap, (list, tuple)) and len(ap) >= 2:
+            try:
+                d["approach"] = [float(ap[0]), float(ap[1])]
+            except (TypeError, ValueError):
+                pass
+        launch = str(a.get("launch") or "auto").lower()
+        d["launch"] = launch if launch in ("auto", "now", "wait", "release") else "auto"
+        out.append(d)
+    return out
+
+
 def _to_int(value):
     try:
         if isinstance(value, bool):
@@ -814,7 +926,7 @@ def _sanitize_combat(raw_orders, state, max_orders, terrain, fire_range, pending
         if not isinstance(o, dict):
             continue
         cmd, uid = o.get("cmd"), _to_int(o.get("id"))
-        if uid not in mine_ids or (uid in seen and cmd not in ("ammo", "limber")):
+        if uid not in mine_ids or (uid in seen and cmd not in ("ammo", "limber", "mount")):
             continue
         order = {"cmd": cmd, "id": uid}
         if cmd == "move":
@@ -845,10 +957,10 @@ def _sanitize_combat(raw_orders, state, max_orders, terrain, fire_range, pending
                     if len(clean) >= max_orders:
                         break
                     continue
+            sidestep = (me["kind"] in FIRING_KINDS and lane_blocker(me, foes, mine) is not None
+                        and math.hypot(order["x"] - me["x"], order["z"] - me["z"]) <= 250)
             if fire_range and me["kind"] in FIRING_KINDS:
                 near = nearest(me, [e for e in foes if unit_status(e) not in DEAD_STATUSES])
-                short = math.hypot(order["x"] - me["x"], order["z"] - me["z"]) <= 250
-                sidestep = lane_blocker(me, foes, mine) is not None and short
                 if near and near[1] <= float(fire_range) and not sidestep:
                     # A moving unit cannot fire: a unit in fire range stands and shoots instead.
                     bump("moves turned into range_attack (unit in fire range)")
@@ -860,9 +972,14 @@ def _sanitize_combat(raw_orders, state, max_orders, terrain, fire_range, pending
                     if len(clean) >= max_orders:
                         break
                     continue
-            if engaged_turn and moves_done >= MAX_MOVES_ENGAGED:
+            # Units in fire range were turned into range_attack above (unless sidestepping): the moves left are
+            # sidesteps and units out of range (reserves, flanks, line corrections), which are allowed.
+            if engaged_turn and not sidestep and moves_done >= max(MAX_MOVES_ENGAGED, MAX_MOVES_TURN):
                 bump("moves dropped (too many moves while in contact)")
-                continue   # lines in contact: only a few moves per turn, the rest must keep firing
+                continue
+            if not sidestep and moves_done >= MAX_MOVES_TURN:
+                bump("moves dropped (more than the moves allowed in one turn)")
+                continue
             old = (pending_moves or {}).get(uid)
             if old and math.hypot(old[0] - order["x"], old[1] - order["z"]) < 150:
                 bump("moves dropped (same destination as an unfinished move)")
@@ -875,13 +992,17 @@ def _sanitize_combat(raw_orders, state, max_orders, terrain, fire_range, pending
                 bump("move destinations shifted (stacking or fire lane)")
             order["x"], order["z"] = spot
             planned.append(spot)
-            moves_done += 1
+            if not sidestep:
+                moves_done += 1
             face = _face_point(o, order, foes)
             if face is not None:
                 order["fx"], order["fz"] = face
         elif cmd in ("attack", "charge", "range_attack"):
             target = _to_int(o.get("target"))
             if target not in foe_ids:
+                continue
+            if cmd == "charge" and by_id[uid].get("mount") in ("dismounted", "dismounting", "mounting"):
+                bump("charges by dismounted cavalry dropped (mount first)")
                 continue
             if cmd == "charge":
                 me, foe = by_id[uid], foe_by_id[target]
@@ -901,6 +1022,17 @@ def _sanitize_combat(raw_orders, state, max_orders, terrain, fire_range, pending
             if by_id[uid]["kind"] != "Artillery" or o.get("value") not in ("pack", "unpack"):
                 continue
             limber_orders.append({"cmd": "limber", "id": uid, "value": o["value"]})
+            continue
+        elif cmd == "mount":
+            me = by_id[uid]
+            if me["kind"] != "Cavalry" or o.get("value") not in ("mount", "dismount"):
+                continue
+            if o["value"] == "dismount" and me.get("canDismount") is False:
+                bump("dismount orders dropped (shock cavalry or in a fortification)")
+                continue
+            if me.get("mount") in (("dismounted", "dismounting") if o["value"] == "dismount" else ("mounted", "mounting")):
+                continue                                     # already in (or going to) that mode
+            limber_orders.append({"cmd": "mount", "id": uid, "value": o["value"]})
             continue
         elif cmd == "hold":
             if by_id[uid]["kind"] == "Artillery" and uid in (pending_moves or {}):

@@ -187,6 +187,142 @@ class TerrainMap:
             text += f"; ford/bridge {cross:.0f}"
         return f"{dist:.0f} away: {text}; height {self.height_at(x1, z1)}->{self.height_at(x2, z2)}"
 
+    # ---- movement cost (from the game's own terrain tooltips) ----------------------
+    DEFAULT_SPEED = {"Grass": 1.0, "Road": 1.0, "Wheatfield": 0.9, "Scrub": 0.45, "Mud": 0.33, "Forest": 0.66,
+                     "DenseForest": 0.6, "Water": 0.05, "WaterNoPass": 0.0, "Bridge": 0.6, "Ford": 0.15,
+                     "Fortifications": 0.7}
+    DEFAULT_STEALTH = {"Forest": 1.0, "DenseForest": 5.0, "Wheatfield": 0.5, "Scrub": 0.25, "Mud": 0.25}
+
+    def _rule_value(self, terrain, field, kind="Infantry"):
+        """A percentage from the game's tooltip text ("Speed 66%" -> 0.66), or None."""
+        table = self.rules.get(kind) or self.rules.get("Infantry") or {}
+        text = str(table.get(terrain) or "")
+        for line in text.split("\n"):
+            if line.strip().lower().startswith(field.lower()):
+                digits = "".join(ch for ch in line if ch.isdigit() or ch == ".")
+                try:
+                    return float(digits) / 100.0
+                except ValueError:
+                    return None
+        return None
+
+    def speed_of(self, terrain, kind="Infantry"):
+        v = self._rule_value(terrain, "Speed", kind)
+        return v if v is not None else self.DEFAULT_SPEED.get(terrain, 1.0)
+
+    def stealth_of(self, terrain, kind="Infantry"):
+        v = self._rule_value(terrain, "Stealth", kind)
+        return v if v is not None else self.DEFAULT_STEALTH.get(terrain, 0.0)
+
+    def path_profile(self, x1, z1, x2, z2, kind="Infantry", slow_below=0.7):
+        """Straight-line march from (x1, z1) to (x2, z2): (distance, effective distance on open ground,
+        share of the way on slow terrain). Effective distance = sum of each piece / its speed factor."""
+        dist = math.hypot(x2 - x1, z2 - z1)
+        if dist < 1:
+            return 0.0, 0.0, 0.0
+        n = max(2, int(dist // (self.step / 2.0)))
+        seg = dist / n
+        eff, slow = 0.0, 0.0
+        for i in range(n):
+            t = (i + 0.5) / n
+            name = self.name_at(x1 + (x2 - x1) * t, z1 + (z2 - z1) * t)
+            sp = max(self.speed_of(name, kind), 0.05)
+            eff += seg / sp
+            if sp < slow_below:
+                slow += seg
+        return dist, eff, slow / dist
+
+    def is_slow(self, x, z, kind="Infantry", slow_below=0.7):
+        return self.speed_of(self.name_at(x, z), kind) < slow_below
+
+    def nearest_open(self, x, z, kind="Infantry", max_dist=250.0, slow_below=0.7):
+        """The nearest passable point on fast terrain (speed >= slow_below) within max_dist, else None."""
+        if not self.is_slow(x, z, kind, slow_below) and self.passable(x, z):
+            return x, z
+        best, bd = None, max_dist + 1
+        step = self.step
+        rings = int(max_dist // step) + 1
+        for r in range(1, rings + 1):
+            for k in range(8 * r):
+                ang = 2 * math.pi * k / (8 * r)
+                px, pz = self.clamp(x + math.cos(ang) * r * step, z + math.sin(ang) * r * step)
+                if not self.passable(px, pz) or self.is_slow(px, pz, kind, slow_below):
+                    continue
+                d = math.hypot(px - x, pz - z)
+                if d < bd:
+                    best, bd = (px, pz), d
+            if best is not None:
+                return best
+        return None
+
+    def nearest_hiding_place(self, x, z, max_dist=600.0, min_stealth=0.5, min_dist=0.0):
+        """The nearest cell whose terrain hides troops (stealth from the tooltips: forest, dense forest,
+        wheat...), as (x, z, terrain name, distance), or None."""
+        col0, row0 = self._cell(x, z)
+        rings = int(max_dist // self.step) + 1
+        best = None
+        for r in range(0, rings + 1):
+            for row in range(row0 - r, row0 + r + 1):
+                for col in (range(col0 - r, col0 + r + 1) if row in (row0 - r, row0 + r) else (col0 - r, col0 + r)):
+                    if not (0 <= row < self.rows and 0 <= col < self.cols):
+                        continue
+                    name = self.legend.get(self.grid[row][col], "")
+                    if self.stealth_of(name) < min_stealth:
+                        continue
+                    cx = self.min_x + (col + 0.5) * self.step
+                    cz = self.min_z + (row + 0.5) * self.step
+                    d = math.hypot(cx - x, cz - z)
+                    if min_dist <= d <= max_dist and (best is None or d < best[3]):
+                        best = (round(cx), round(cz), name, round(d))
+            if best is not None:
+                return best
+        return None
+
+    # ---- firing positions (cover and damage from the game's tooltips) ----------------
+    DEFAULT_COVER = {"Grass": 0.5, "Road": 0.5, "Wheatfield": 1.15, "Scrub": 0.5, "Mud": 0.5, "Forest": 1.5,
+                     "DenseForest": 1.6, "Water": 0.01, "Bridge": 0.01, "Ford": 0.01, "Fortifications": 2.0}
+    DEFAULT_DAMAGE = {"Wheatfield": 0.9, "Scrub": 0.9, "Mud": 0.95, "Forest": 0.8, "DenseForest": 0.7,
+                      "Water": 0.5, "Bridge": 0.6, "Ford": 0.5, "Fortifications": 0.8}
+
+    def cover_of(self, terrain, kind="Infantry"):
+        v = self._rule_value(terrain, "Cover", kind)
+        return v if v is not None else self.DEFAULT_COVER.get(terrain, 0.5)
+
+    def damage_of(self, terrain, kind="Infantry"):
+        v = self._rule_value(terrain, "Damage", kind)
+        return v if v is not None else self.DEFAULT_DAMAGE.get(terrain, 1.0)
+
+    def fire_value(self, x, z, kind="Infantry"):
+        """How good a spot is to stand and fire from: protection (cover) times own fire (damage).
+        Open grass 0.5, wheat about 1.0, forest 1.2, fortifications 1.6."""
+        name = self.name_at(x, z)
+        return self.cover_of(name, kind) * self.damage_of(name, kind)
+
+    def best_fire_spot(self, ux, uz, tx, tz, rng, kind="Infantry", taken=(), max_move=None, arc_deg=40.0,
+                       cover_weight=700.0, keep_apart=120.0):
+        """A firing position against the target at (tx, tz): on an arc around the target, inside the fire range,
+        trading the march (at real speed) against the protection of the spot. Returns (x, z, terrain, value) or
+        None. `taken` are spots already given to other units; `max_move` limits the distance from the unit."""
+        base = math.atan2(uz - tz, ux - tx)
+        best, best_cost = None, None
+        for frac in (0.7, 0.8, 0.9):
+            r = rng * frac
+            for k in range(-int(arc_deg // 8), int(arc_deg // 8) + 1):
+                ang = base + math.radians(8.0 * k)
+                x, z = self.clamp(tx + math.cos(ang) * r, tz + math.sin(ang) * r)
+                if not self.passable(x, z):
+                    continue
+                if max_move is not None and math.hypot(x - ux, z - uz) > max_move:
+                    continue
+                if any(math.hypot(x - px, z - pz) < keep_apart for px, pz in taken):
+                    continue
+                _, eff, _ = self.path_profile(ux, uz, x, z, kind)
+                value = self.fire_value(x, z, kind)
+                cost = eff - cover_weight * (value - 0.5)
+                if best_cost is None or cost < best_cost:
+                    best, best_cost = (round(x, 1), round(z, 1), self.name_at(x, z), round(value, 2)), cost
+        return best
+
     # ---- prompt section ------------------------------------------------------------
     def prompt_text(self, overview_cols=60, height_cols=40, show_heights=True, show_rules=True):
         lines = []

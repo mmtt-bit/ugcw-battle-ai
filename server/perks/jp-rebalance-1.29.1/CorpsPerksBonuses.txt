@@ -1,0 +1,9 @@
+Strategic, Accuracy|.20|*|Infantry, Accuracy|.20|*|Skirmish, Accuracy|.20|*|Cavalry, Accuracy|.10|*|Artillery
+Tactic, ChargeDamage|.25|*|All
+Trainer, MoveSpeed|.15|*|All 
+Artillery, Accuracy|.20|*|Infantry, Accuracy|.20|*|Skirmish, Accuracy|.20|*|Cavalry, Accuracy|.10|*|Artillery, Reload|-.05|*|All, CommandRadius|1|*|All
+Infantry, ChargeDamage|.25|*|All, MeleeDamageMoraleImpact|-.1|*|All, CommandRadius|1|*|All
+Cavalry, MoveSpeed|.15|*|All, RotationSpeed|2|*|All, CommandRadius|1|*|All
+Leader, MeleeDamageMoraleImpact|-.1|*|All, SmallArmsDamageMoraleImpact|-.1|*|All, CommandRadius|1|*|All
+Attacker, Experience|.25|*|All, CommandRadius|1|*|All
+Defender, Cover|.3|*|All, CommandRadius|1|*|All

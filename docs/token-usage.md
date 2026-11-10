@@ -30,3 +30,11 @@ The server prints the real figures after every call and in the battle report: pr
 - `economy.morale_drop`: 0.15 or 0.2 skips more quiet turns in heavy fighting.
 - `scale.large`: the radii and caps of the compact prompt.
 - `claude_code.effort`: try a lower effort and compare results on the scoreboard.
+
+## Reflexes (v0.1.3-beta)
+
+The plugin's reflexes cost no tokens when they act. The model only reads what they did: about 300 tokens of rules in
+the cached system prompt and, per turn, at most 8 event lines (about 100 to 250 tokens). Because urgent reactions no
+longer wait for a turn, turns in contact come every 90 s instead of 60: about 38 calls per hour of engaged battle
+instead of 57. For 25 brigades: about 190,000 tokens not cached per hour instead of 270,000 (-30 %), answers about
+20,000 instead of 28,000.

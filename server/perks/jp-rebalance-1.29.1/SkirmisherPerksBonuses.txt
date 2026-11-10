@@ -1,0 +1,7 @@
+Discipline_training_inf, MoveSpeed|.3|*|All, Cover|.3|*|All
+Endurance_course_inf, Accuracy|.3|*|All, Reload|-.05|*|All
+Firearms_course, Spotting|.5|*|All, Accuracy|.3|*|All, Stealth|.5|*|All
+Recon_course, Accuracy|.3|*|All, Reload|-.05|*|All, Cover|.3|*|All
+Marksman_training, Spotting|.5|*|All, Accuracy|.3|*|All, Stealth|.5|*|All
+Scouts, SmallArmsDamageMoraleImpact|-.1|*|All, MeleeDamageMoraleImpact|-.15|*|All, Reload|-.2|*|All, RotationSpeed|4|*|All
+Sharpshooters, EffectiveRange|.2|*|All, Cover|.2|*|All, Reload|.3|*|All, MoveSpeed|.2|*|All

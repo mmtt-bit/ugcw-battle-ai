@@ -10,6 +10,8 @@ The plugin reports, for every unit (optional fields, an old plugin simply omits 
 import math
 import re
 
+import perks as perks_mod
+
 AMMO_MODES = ("auto", "mixed", "canister")
 MIN_RANGE, MAX_RANGE = 100.0, 3000.0     # ignore absurd values reported by the game
 
@@ -107,9 +109,16 @@ def equipment_static(u):
         t = _num(u, "spotting", "sees {:.0f}")
         if t:
             bits.append(t)
-    perks = perks_list(u)
-    if perks:
-        bits.append("perks: " + ", ".join(perks))
+    raw_perks = [str(p) for p in (u.get("perks") or []) if p]
+    if raw_perks:
+        if perks_mod.loaded():
+            # the internal names, as in the PERKS block of the system prompt, plus the roles they strengthen
+            bits.append("perks: " + ", ".join(raw_perks))
+            roles = perks_mod.roles(u.get("kind"), raw_perks)
+            if roles:
+                bits.append("perk roles: " + ", ".join(roles[:3]))
+        else:
+            bits.append("perks: " + ", ".join(perks_list(u)))
     return "; ".join(bits)
 
 
@@ -126,15 +135,20 @@ def equipment_dynamic(u):
         t = _num(u, "width", "width {:.0f}")
         if t:
             bits.append(t)
+    if u.get("mount") and u["mount"] != "mounted":
+        bits.append({"mounted": "mounted", "dismounted": "DISMOUNTED", "dismounting": "dismounting",
+                     "mounting": "mounting"}.get(str(u["mount"]), str(u["mount"])))
+    if u.get("mount") == "mounted" and u.get("canDismount") is False:
+        bits.append("cannot dismount")
     if u.get("limber"):
         bits.append({"ready": "ready to fire", "packed": "PACKED (limbered)", "packing": "packing up",
                      "unpacking": "unlimbering"}.get(str(u["limber"]), str(u["limber"])))
-    if u.get("ammoMode") in AMMO_MODES:
-        bits.append(f"ammo mode {u['ammoMode']}")
+    if u.get("ammoMode") in AMMO_MODES and u["ammoMode"] != "auto":
+        bits.append(f"ammo mode {u['ammoMode']}")          # "auto" is the normal mode: not written
     if u.get("ammo") is not None:
         t = _num(u, "ammo", "x")
-        if t:
-            bits.append(f"ammo {float(u['ammo']) * 100:.0f}%")
+        if t and float(u["ammo"]) < 0.995:
+            bits.append(f"ammo {float(u['ammo']) * 100:.0f}%")   # full ammunition: not written
     return "; ".join(bits)
 
 
@@ -143,9 +157,27 @@ def equipment_text(u, roster=None):
     With `roster` (unit id -> fixed equipment already given in the system prompt) a unit whose fixed part
     is unchanged only shows its changing part, which saves tokens every turn."""
     static, dynamic = equipment_static(u), equipment_dynamic(u)
-    if roster is not None and static and roster.get(u.get("id")) == static:
-        return dynamic
+    if roster is not None and u.get("id") in roster:
+        return dynamic           # fixed part in the roster of the system prompt (a changed charge range included)
     return "; ".join(b for b in (static, dynamic) if b)
+
+
+def equipment_enemy(u):
+    """Short equipment of an enemy unit, written every turn: bore of the weapon, stars, perks, and the changing
+    part (range, width, ammunition...). Weapon model names and charge ranges are left out to save tokens."""
+    bits = []
+    label = weapon_label(u.get("weapon"))
+    if label:
+        kind = label.split(" ")[0]                     # rifle / musket / carbine / gun...
+        tag = label[label.find("(") + 1:label.rfind(")")] if "(" in label else ""
+        bits.append(kind + (f" ({tag})" if tag else ""))
+    if u.get("stars"):
+        bits.append(f"{int(u['stars'])} star" + ("" if int(u["stars"]) == 1 else "s"))
+    raw_perks = [str(p) for p in (u.get("perks") or []) if p]
+    if raw_perks:
+        bits.append("perks: " + ", ".join(raw_perks))
+    dynamic = equipment_dynamic(u)
+    return "; ".join(b for b in bits + ([dynamic] if dynamic else []) if b)
 
 
 def roster_lines(units):

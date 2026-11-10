@@ -62,9 +62,82 @@ namespace UgcwAi
                 if (!string.IsNullOrEmpty(next)) b["continue"] = next;
                 object index = Prop(manager, "CurrentMissionIndex");
                 if (index != null) b["index"] = index.ToString();
+                AddTimeLeft(b);
             }
             catch (Exception e) { UnityEngine.Debug.LogWarning("[UgcwAi] Briefing failed: " + e.Message); }
             return b;
+        }
+
+        // Time left on the mission timer. The timers are the goal components MissionGoal.TimerMandatory (the
+        // battle ends then) and MissionGoal.TimerRecommended (suggested end), both ITopPanelTimer with LeftSeconds.
+        // (The top panel's own "timer" field is only the date/clock display.) Also sends the in-game clock and the
+        // end-of-day hour of the J&P Rebalance settings when they can be read.
+        private static bool timerLogged;
+        private static void AddTimeLeft(JObject b)
+        {
+            string how = "";
+            try
+            {
+                Assembly asm = typeof(GOAP.UnitModel).Assembly;
+                foreach (string tn in new string[] { "MissionGoal.TimerMandatory", "MissionGoal.TimerRecommended" })
+                {
+                    Type t = asm.GetType(tn);
+                    if (t == null) { how += tn + ": no type; "; continue; }
+                    UnityEngine.Object[] found = UnityEngine.Object.FindObjectsOfType(t);
+                    how += tn + ": " + found.Length + " found; ";
+                    foreach (UnityEngine.Object o in found)
+                    {
+                        object active = Read(o, "isActive");
+                        if (active is bool && !(bool)active) continue;
+                        object left = Prop(o, "LeftSeconds");
+                        if (left == null) continue;
+                        double v = Convert.ToDouble(left);
+                        if (v <= 0) continue;
+                        if (b["timeLeftS"] == null || v < (double)b["timeLeftS"])
+                        {
+                            b["timeLeftS"] = Math.Round(v, 0);
+                            b["timerKind"] = t.Name;
+                            object shown = Prop(o, "IsUIActive");
+                            if (shown != null) b["timerShown"] = Convert.ToBoolean(shown);
+                        }
+                    }
+                    if (b["timeLeftS"] != null) break;      // the mandatory timer wins over the recommended one
+                }
+            }
+            catch (Exception e) { how += "timer error " + e.Message + "; "; }
+            try
+            {
+                // time already spent in this mission (phase): with the time left it gives the phase's whole time,
+                // also after loading a saved battle
+                object manager = Read(BattleLogic.instance, "missionManager");
+                object since = Prop(manager, "TimeSinceMissionStart");
+                if (since != null) b["missionElapsedS"] = Math.Round(Convert.ToDouble(since), 0);
+            }
+            catch (Exception e) { how += "elapsed error " + e.Message + "; "; }
+            try
+            {
+                object clock = Prop(BattleLogic.instance, "BattleTime");
+                if (clock is DateTime)
+                {
+                    DateTime now = (DateTime)clock;
+                    b["clock"] = now.ToString("HH:mm");
+                    Type bs = typeof(GOAP.UnitModel).Assembly.GetType("Rebalance.Config+BattleSettings");
+                    if (bs != null)
+                    {
+                        FieldInfo h = bs.GetField("endOfDayHour", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                        FieldInfo m = bs.GetField("endOfDayMinute", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (h != null && m != null)
+                            b["endOfDay"] = Convert.ToInt32(h.GetValue(null)).ToString("00") + ":" + Convert.ToInt32(m.GetValue(null)).ToString("00");
+                    }
+                }
+            }
+            catch (Exception e) { how += "clock error " + e.Message + "; "; }
+            if (!timerLogged)
+            {
+                timerLogged = true;
+                UnityEngine.Debug.Log("[UgcwAi] Mission timer: " + how + "timeLeftS=" + (b["timeLeftS"] ?? "none")
+                                      + " elapsed=" + (b["missionElapsedS"] ?? "none") + " clock=" + (b["clock"] ?? "none") + " endOfDay=" + (b["endOfDay"] ?? "none"));
+            }
         }
 
         private static object Prop(object o, string name)

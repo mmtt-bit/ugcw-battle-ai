@@ -15,3 +15,7 @@ Démarrage rapide :
 
 Aucun fichier du jeu n'est dans ce dépôt. Guide complet (en anglais) : [`docs/user-guide.txt`](docs/user-guide.txt).
 Licence MIT.
+
+## Retours et assistance
+
+Rejoignez le Discord J&P et écrivez dans les salons du mod J&P Rebalance : https://discord.gg/NmHUGvq

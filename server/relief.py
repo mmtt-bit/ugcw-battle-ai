@@ -27,18 +27,22 @@ DEFAULT_RELIEF = {
     "cooldown_s": 90.0,           # do not re-issue the pull-back to the same brigade sooner than this
     "rested_morale": 0.65,        # a pulled-back brigade is not sent forward again before this morale
     "replace": True,
-    "max_replacements": 2,
+    "max_replacements": 2,        # per turn (floor)...
+    "replacements_share": 0.05,   # ...or this share of the infantry brigades, whichever is larger
     "replacement_min_morale": 0.7,
     "replacement_min_strength": 0.6,
     "replacement_max_distance": 1300.0,
     "reserve_commit": True,
     "commit_minutes": 20.0,       # idle healthy brigades go to the line from this battle time...
     "commit_minutes_attack": 8.0,   # ...or from this one when the plan is ATTACK
+    "commit_share": 0.3,          # with a battle timer: from this share of the phase's time...
+    "commit_share_attack": 0.12,  # ...or this one when attacking
     "release_minutes": 40.0,      # one brigade stays in reserve until this battle time
     "reserve_min_distance": 700.0,  # an idle brigade this far from every enemy counts as reserve
     "reserve_min_morale": 0.7,
     "reserve_min_strength": 0.6,
-    "reserve_max_per_turn": 2,
+    "reserve_max_per_turn": 2,    # per turn (floor)...
+    "reserve_per_turn_share": 0.05,  # ...or this share of the infantry brigades
 }
 
 _STOP_CMDS = ("hold", "attack", "range_attack", "charge", "move")
@@ -134,7 +138,9 @@ def relief_orders(state, orders, cfg, last_cmds, pending_moves, terrain=None, cl
             return not (last and last.get("cmd") in ("attack", "range_attack", "charge"))
         avoid = set(avoid or ())
         pool.sort(key=lambda r: (r["id"] in avoid, not free(r)))
-        for u, e in vacated[:int(cfg["max_replacements"])]:
+        n_inf = sum(1 for r in mine if r["kind"] == "Infantry")
+        cap = max(int(cfg["max_replacements"]), int(round(float(cfg.get("replacements_share", 0.0)) * n_inf)))
+        for u, e in vacated[:cap]:
             cands = [r for r in pool if r["id"] not in taken
                      and math.hypot(r["x"] - u["x"], r["z"] - u["z"]) <= float(cfg["replacement_max_distance"])]
             if not cands:
@@ -156,9 +162,15 @@ def reserve_orders(state, orders, cfg, last_cmds, pending_moves, plan_mode=None,
     cfg = {**DEFAULT_RELIEF, **(cfg or {})}
     if not cfg["enabled"] or not cfg["reserve_commit"]:
         return []
-    now_min = float(state.get("time", 0.0)) / 60.0
+    now_min = float(state.get("phaseTime", state.get("time", 0.0))) / 60.0   # minutes of this map (phase)
     commit = float(cfg["commit_minutes_attack"] if plan_mode == "ATTACK" else cfg["commit_minutes"])
-    if now_min < commit:
+    used = state.get("phaseUsed")
+    if used is not None:
+        # with a battle timer: a share of the phase's time (20 min of a 1 h battle = a third of it)
+        share = float(cfg["commit_share_attack"] if plan_mode == "ATTACK" else cfg["commit_share"])
+        if float(used) < share:
+            return []
+    elif now_min < commit:
         return []
     mine, foes = split_units(state)
     mine, foes = _live(mine), _live(foes)
@@ -181,7 +193,8 @@ def reserve_orders(state, orders, cfg, last_cmds, pending_moves, plan_mode=None,
         return []
     keep = 1 if (now_min < float(cfg["release_minutes"]) and len(inf) >= 5) else 0
     reserve.sort(key=lambda u: (nearest(u, foes) or (None, 1e9))[1])
-    send = reserve[:max(0, len(reserve) - keep)][:int(cfg["reserve_max_per_turn"])]
+    cap = max(int(cfg["reserve_max_per_turn"]), int(round(float(cfg.get("reserve_per_turn_share", 0.0)) * len(inf))))
+    send = reserve[:max(0, len(reserve) - keep)][:cap]
     out = []
     planned = []
     for k, u in enumerate(send):

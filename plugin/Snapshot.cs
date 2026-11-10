@@ -23,6 +23,7 @@ namespace UgcwAi
 			jobject["objectives"] = TerrainScan.Objectives();
 			jobject["battleGoals"] = MissionGoals.Describe();
 			jobject["briefing"] = MissionGoals.Briefing();
+			jobject["reflexEvents"] = Reflexes.DrainEvents();   // what the in-game reflexes did since the last turn
 			UnitExtras.WriteRoot(jobject);
 			JArray jarray = new JArray();
 			for (int i = 0; i < instance.unitsCount; i++)

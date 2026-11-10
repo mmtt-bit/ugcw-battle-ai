@@ -81,7 +81,9 @@
     "charge_target_morale": 0.5,
     "charge_min_morale": 0.6,
     "charge_min_stamina": 0.5,
-    "charge_min_strength": 0.6
+    "charge_min_strength": 0.6,
+    "per_turn_share": 0.06,
+    "charges_share": 0.03
   },
   "ammo": {
     "auto": true,
@@ -106,11 +108,16 @@
     "stop_loss_hold_s": 480,
     "attack_by_default": true,
     "min_attack_ratio": 0.7,
-    "build_up_minutes": 25
+    "build_up_minutes": 25,
+    "stop_loss_min_contact": 5,
+    "stop_loss_share": 0.01,
+    "force_stop_loss": false,
+    "min_casualties_share": 0.02
   },
   "overlay": {
     "enabled": true,
-    "max_chars": 260
+    "max_chars": 260,
+    "show_ai_orders": false
   },
   "supply": {
     "enabled": true,
@@ -160,7 +167,11 @@
     "ride_min_morale": 0.7,
     "ride_min_stamina": 0.5,
     "ride_min_strength": 0.6,
-    "ride_auto": true
+    "ride_auto": true,
+    "ride_woods_clear": 250.0,
+    "ride_max_slow_share": 0.3,
+    "ride_auto_max": 2,
+    "ride_auto_window_s": 600
   },
   "assault": {
     "enabled": true,
@@ -176,11 +187,38 @@
     "ready_share": 0.7,
     "launch_min_ratio": 0.6,
     "max_wait_s": 900.0,
+    "strong_ratio": 2.0,
+    "strong_ready_share": 0.5,
+    "latest_launch_minutes": 35.0,
+    "stage_angles": [
+      0,
+      -20,
+      20,
+      -40,
+      40
+    ],
     "defender_radius": 650.0,
     "max_orders_per_turn": 5,
     "abort_loss_share": 0.35,
     "abort_pause_s": 600.0,
-    "briefing_chars": 700
+    "briefing_chars": 700,
+    "group_max_share": 0.12,
+    "launch_time_share": 0.7,
+    "defender_memory_s": 600.0,
+    "approach_margin": 250.0,
+    "cover_weight": 700.0,
+    "charge_morale": 0.5,
+    "charge_when_strong": false,
+    "charge_min_morale": 0.7,
+    "max_charges_per_turn": 4,
+    "charge_max_distance": 200.0,
+    "charge_together": 2,
+    "reserve_keep": null,
+    "split_min_infantry": 6,
+    "charge_open_distance": 500.0,
+    "charge_slow_distance": 200.0,
+    "charge_slow_share": 0.25,
+    "close_charge_strength": 0.7
   },
   "relief": {
     "enabled": true,
@@ -204,17 +242,23 @@
     "reserve_min_distance": 700.0,
     "reserve_min_morale": 0.7,
     "reserve_min_strength": 0.6,
-    "reserve_max_per_turn": 2
+    "reserve_max_per_turn": 2,
+    "replacements_share": 0.05,
+    "reserve_per_turn_share": 0.05,
+    "commit_share": 0.3,
+    "commit_share_attack": 0.12
   },
   "economy": {
     "static_roster": true,
     "skip_quiet_turns": true,
-    "max_consecutive_skips": 1,
-    "max_gap_s": 150,
-    "morale_drop": 0.1,
+    "max_consecutive_skips": 2,
+    "max_gap_s": 330,
+    "morale_drop": 0.3,
     "loss_men": 100,
     "loss_share": 0.01,
-    "log_usage": true
+    "log_usage": true,
+    "new_enemy_men": 1200,
+    "new_enemy_share": 0.04
   },
   "scale": {
     "force": null,
@@ -227,6 +271,133 @@
       "max_charge": 8,
       "max_lanes": 6,
       "compact_orders": true
+    },
+    "small": {
+      "detail_radius": 1500,
+      "route_radius": 800
     }
+  },
+  "perks": {
+    "folder": "perks/jp-rebalance-1.29.1",
+    "label": "J&P Rebalance 1.29.1",
+    "show_in_prompt": true
+  },
+  "generals": {
+    "enabled": true,
+    "auto_follow": true,
+    "min_inside_share": 0.6,
+    "safe_distance": 650.0,
+    "danger_distance": 450.0,
+    "behind_share": 0.35,
+    "default_radius": 0.0,
+    "min_move": 120.0
+  },
+  "reflexes": {
+    "enabled": true,
+    "face": true,
+    "brace": true,
+    "safety": true,
+    "tick_s": 0.5,
+    "face_radius": 350,
+    "face_angle": 60,
+    "face_cooldown_s": 20,
+    "brace_radius": 250,
+    "counter_radius": 300,
+    "counter_morale": 0.7,
+    "brace_cooldown_s": 15,
+    "canister_range": 300,
+    "battery_cover": 200,
+    "battery_danger": 150,
+    "wagon_danger": 450,
+    "general_danger": 400,
+    "run_away": 300,
+    "panic_morale": 0.3,
+    "panic_contact": 300,
+    "safety_cooldown_s": 20,
+    "engaged_interval_s": 90,
+    "max_lines": 8,
+    "unseen": true,
+    "unseen_advance": false,
+    "unseen_loss": 6,
+    "unseen_share": 0.003,
+    "unseen_reach": 650,
+    "unseen_cooldown_s": 25,
+    "unseen_advance_morale": 0.7,
+    "unseen_step": 150,
+    "unseen_aggressiveness": null,
+    "unseen_window_s": 60
+  },
+  "terrain_rules": {
+    "enabled": true,
+    "charge_max_slow_share": 0.4,
+    "charge_max_effective": 1.3,
+    "slow_below": 0.7,
+    "open_ground_for": [
+      "Artillery",
+      "Supply"
+    ],
+    "open_ground_search": 250.0,
+    "unseen_min_loss": 15.0,
+    "unseen_reach": 650.0,
+    "unseen_hide_search": 700.0,
+    "unseen_hide_min": 150.0,
+    "max_unseen_lines": 5,
+    "unseen_min_share": 0.005,
+    "unseen_respond": true,
+    "unseen_withdraw": 250.0,
+    "unseen_advance_stop": 120.0,
+    "cavalry_withdraw": 400.0,
+    "unseen_charge_reach": 400.0,
+    "unseen_close_gap": 200.0,
+    "unseen_min_range": 100.0,
+    "cover_respond": true,
+    "cover_max_move": 220.0,
+    "cover_min_gain": 0.4,
+    "cover_max_per_turn": 3,
+    "charge_close": 200.0
+  },
+  "doctrine": {
+    "aggressiveness": null
+  },
+  "routes": {
+    "enabled": true,
+    "min_distance": 500.0,
+    "min_gain": 0.1,
+    "road_preference": 0.85,
+    "max_waypoints": 8,
+    "straighten_tolerance": 1.06,
+    "max_routes_per_turn": 12,
+    "kinds": [
+      "Infantry",
+      "Artillery",
+      "Supply",
+      "Cavalry",
+      "Skirmish"
+    ],
+    "edge_margin": 120.0
+  },
+  "cohesion": {
+    "enabled": true,
+    "leash_friends": 650.0,
+    "leash_objective": 800.0,
+    "recall_short_of": 250.0,
+    "max_per_turn": 4,
+    "no_chase": true,
+    "chase_margin": 100.0,
+    "chase_leash": 450.0,
+    "out_of_reach_margin": 60.0
+  },
+  "final_charge": {
+    "enabled": true,
+    "minutes_left": 20.0,
+    "charge_minutes_left": 12.0,
+    "min_morale": 0.7,
+    "max_distance": 2500.0,
+    "defender_radius": 700.0,
+    "open_distance": 500.0,
+    "slow_distance": 200.0,
+    "slow_share": 0.25,
+    "ready_share": 0.6,
+    "keep_back": 1
   }
 }

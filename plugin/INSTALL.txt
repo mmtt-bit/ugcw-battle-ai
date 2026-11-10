@@ -1,7 +1,7 @@
-UGCW Battle AI v0.1.2-beta - BUILDING THE PLUGIN INTO THE GAME DLL (dnSpy)
+UGCW BATTLE AI v0.1.3-beta - BUILDING THE PLUGIN INTO THE GAME DLL (dnSpy)
 ===========================================================================
 You need: dnSpy (https://github.com/dnSpy/dnSpy, the 64-bit .NET build), and the Mono build of Ultimate General: Civil War
-(Unity 5.4.4). The plugin is 11 C# classes in the "UgcwAi" namespace plus ONE line added to a game method.
+(Unity 5.4.4). The plugin is 12 C# classes in the "UgcwAi" namespace plus ONE line added to a game method.
 It is adapted from the rome-battle-ai plugin by Cegli865. The game's own Assembly-CSharp.dll is not part of this package.
 
 0. BACK UP FIRST. Close the game. In "<game folder>\\<game name>_Data\\Managed" copy Assembly-CSharp.dll to
@@ -12,7 +12,8 @@ It is adapted from the rome-battle-ai plugin by Cegli865. The game's own Assembl
    (If you still get "type JArray / ScriptableObject / Debug not found": Edit > Edit Assembly References, or reopen from Managed.)
 
 2. ADD THE CLASSES, in this order (each one compiles on its own once the ones before it exist):
-      Bridge, Orders, AiThoughtsPanel, UnitExtras, MissionGoals, Commands, TerrainScan, BattleResult, Snapshot, Runner, Bootstrap
+      Bridge, Orders, AiThoughtsPanel, UnitExtras, Reflexes, MissionGoals, Commands, TerrainScan, BattleResult, Snapshot,
+      Runner, Bootstrap
    For each: right-click the Assembly-CSharp module (or the "UgcwAi" namespace once it exists) > Add Class...,
    select all the text in the editor, paste the whole content of the matching file from "plugin", click Compile.
    Fix nothing by hand: if a class does not compile, the error text tells which class before it is missing.

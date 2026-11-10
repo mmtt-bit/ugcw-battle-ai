@@ -38,9 +38,19 @@ namespace UgcwAi
             text = newText ?? "";
         }
 
+        // Empties the panel (end of battle): nothing is drawn until the next thought.
+        public static void Clear()
+        {
+            text = "";
+            mode = "";
+            kd = -1f;
+        }
+
         public static void Draw()
         {
             if (!Visible || string.IsNullOrEmpty(text)) return;
+            // no server (disconnected) or no battle running: the last thought must not stay on screen
+            if (!Bridge.Connected || BattleLogic.instance == null) { Clear(); return; }
             try
             {
                 float k = Screen.height / 1080f;

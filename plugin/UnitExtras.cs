@@ -96,6 +96,30 @@ namespace UgcwAi
             catch (Exception) { }
             try
             {
+                // Corps the unit belongs to (-1 when none) and, for a general, the radius in which his corps bonuses
+                // reach his brigades.
+                object corps = ReadProperty(u, "CorpsId");
+                if (corps != null) o["corps"] = Convert.ToInt32(corps);
+                if (u.Kind.ToString() == "General")
+                {
+                    object radius = ReadProperty(u, "CommandRadius");
+                    if (radius != null) o["commandRadius"] = Math.Round(Convert.ToDouble(radius), 0);
+                }
+            }
+            catch (Exception) { }
+            try
+            {
+                // Cavalry: mounted or dismounted (like limbered / unlimbered for artillery), and whether it may
+                // dismount at all (the game forbids it to shock cavalry and inside fortifications).
+                if (u is GOAP.CavalryModel)
+                {
+                    o["mount"] = MountState(u);
+                    o["canDismount"] = CanDismount(u);
+                }
+            }
+            catch (Exception) { }
+            try
+            {
                 // Supply wagon: stock left, which kinds it feeds and the radius of its area.
                 GOAP.SupplyModel sm = u as GOAP.SupplyModel;
                 if (sm != null)
@@ -211,6 +235,62 @@ namespace UgcwAi
                     mm.SetValue(u, Enum.ToObject(mm.PropertyType, 1), null);   // the value the game's own unpack path uses
             }
             catch (Exception e) { UnityEngine.Debug.LogWarning("[UgcwAi] Forced unpack failed: " + e.Message); }
+        }
+
+        // "mounted", "dismounting", "dismounted" or "mounting" (EUnitState 18 = Dismounting, 19 = Dismounted;
+        // enableDismounting tells the direction of a change in progress).
+        public static string MountState(GOAP.UnitModel u)
+        {
+            bool[] flags = ReadField(u, "flags") as bool[];
+            bool changing = flags != null && flags.Length > 18 && flags[18];
+            bool down = flags != null && flags.Length > 19 && flags[19];
+            object wants = ReadField(u, "enableDismounting");
+            bool toFoot = wants is bool && (bool)wants;
+            if (changing) return toFoot ? "dismounting" : "mounting";
+            return down ? "dismounted" : "mounted";
+        }
+
+        // Same rule as the game's dismount button (ButtonsContainer.OnDismountClick): cavalry only, not shock
+        // cavalry (weapon melee damage above Config.gameSettings.unitSettings.cavalry.shockCavalryThreshold),
+        // and not inside a fortification.
+        public static bool CanDismount(GOAP.UnitModel u)
+        {
+            if (!(u is GOAP.CavalryModel)) return false;
+            try
+            {
+                object weapon = ReadProperty(u, "Weapon");
+                object melee = weapon != null ? ReadField(weapon, "meleeDamage") : null;
+                Type config = typeof(GOAP.UnitModel).Assembly.GetType("Config");
+                object settings = config != null ? config.GetField("gameSettings",
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic).GetValue(null) : null;
+                object unitSettings = settings != null ? ReadField(settings, "unitSettings") : null;
+                object cavalry = unitSettings != null ? ReadField(unitSettings, "cavalry") : null;
+                object threshold = cavalry != null ? ReadField(cavalry, "shockCavalryThreshold") : null;
+                if (melee != null && threshold != null && Convert.ToDouble(melee) > Convert.ToDouble(threshold)) return false;
+            }
+            catch (Exception) { }
+            if (ReadProperty(u, "Fortification") != null) return false;
+            return true;
+        }
+
+        // Executes {"cmd":"mount","id":9,"value":"dismount"|"mount"} for a cavalry unit, as the game's dismount button
+        // does (UnitModel.IsDismounting = true dismounts, false mounts again).
+        public static void SetMount(GOAP.UnitModel u, string value)
+        {
+            if (u == null || !u.IsAlive || !(u is GOAP.CavalryModel)) return;
+            bool dismount = value == "dismount";
+            if (dismount && !CanDismount(u))
+            {
+                UnityEngine.Debug.Log("[UgcwAi] Mount " + u.id + ": this cavalry cannot dismount (shock cavalry or fortification)");
+                return;
+            }
+            try { if (u.IsUnderAIControl) u.aiData.commander.RemoveUnit(u); }
+            catch (Exception) { }
+            System.Reflection.PropertyInfo p = typeof(GOAP.UnitModel).GetProperty("IsDismounting",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (p == null || !p.CanWrite) { UnityEngine.Debug.LogWarning("[UgcwAi] Mount: IsDismounting not found"); return; }
+            p.SetValue(u, dismount, null);
+            UnityEngine.Debug.Log("[UgcwAi] Mount " + u.id + " -> " + value + " (" + MountState(u) + ")");
         }
 
         // Compact dump of the limbering state, for the log and for the server (to see why a battery stays packed).

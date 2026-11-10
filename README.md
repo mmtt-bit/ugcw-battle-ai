@@ -8,7 +8,7 @@ orders, the server checks them against the rules of the game, and the game resum
 It follows the design of [rome-battle-ai](https://github.com/Cegli865/rome-battle-ai) by Cegli865
 (Total War: ROME REMASTERED), adapted to Ultimate General: Civil War (Unity 5.4.4, Mono).
 
-> **Status: beta (v0.1.2-beta).** Tested on a few missions, one battle at a time, on Windows.
+> **Status: beta (v0.1.3-beta).** Tested on a few missions, one battle at a time, on Windows.
 > Expect rough edges. Bug reports with the server console text and the files in `logs/` and
 > `reports/` are welcome.
 
@@ -16,15 +16,15 @@ It follows the design of [rome-battle-ai](https://github.com/Cegli865/rome-battl
 
 | Part | Folder | What it does |
 |---|---|---|
-| Game plugin (C#) | [`plugin/`](plugin) | 11 classes in the `UgcwAi` namespace compiled into the game's `Assembly-CSharp.dll` with dnSpy. Reads the battlefield, sends it over TCP (127.0.0.1:8765), executes the orders, shows the AI's reasoning in game (F6). |
+| Game plugin (C#) | [`plugin/`](plugin) | 12 classes in the `UgcwAi` namespace compiled into the game's `Assembly-CSharp.dll` with dnSpy. Reads the battlefield, sends it over TCP (127.0.0.1:8765), executes the orders, runs fast reflexes between turns (facing, bracing, safety), shows the AI's reasoning in game (F6). |
 | Planner server (Python) | [`server/`](server) | Standard library only. Builds the prompts, calls the model, validates the orders, runs the server-side doctrine (morale relief, assault on objectives, artillery and supply discipline), writes battle reports and an after-action review. |
 | Doctrine | [`server/game_rules.md`](server/game_rules.md), [`server/strategy.md`](server/strategy.md) | Plain-text rules and tactics given to the model. Edit them freely: they are re-read at every planning pause. |
 
 Main features: mission goals and briefing read from the game, an attack/defend/trade plan computed from
 them, an assault plan on the objective, front line and fire-lane management, artillery (limbering,
 canister, protection), supply wagons with safe routes, cavalry roles (reserve, flanks, scouting, riding
-down skirmishers), battle reports with a scoreboard per model, and token-saving options for short and
-large battles. Details: [`docs/user-guide.txt`](docs/user-guide.txt).
+down skirmishers, mounted or dismounted), generals kept within reach of their brigades (command radius), battle reports with a scoreboard per model, and token-saving options for short and
+large battles, and the perk effects of the J&P Rebalance mod (`server/perks/`). Details: [`docs/user-guide.txt`](docs/user-guide.txt).
 
 ## Requirements
 
@@ -37,7 +37,7 @@ large battles. Details: [`docs/user-guide.txt`](docs/user-guide.txt).
 ## Install
 
 1. **Plugin.** Back up `Assembly-CSharp.dll` from `<game>\<game name>_Data\Managed`, then follow
-   [`plugin/INSTALL.txt`](plugin/INSTALL.txt): add the 11 classes with dnSpy and one line,
+   [`plugin/INSTALL.txt`](plugin/INSTALL.txt): add the 12 classes with dnSpy and one line,
    `UgcwAi.Bootstrap.Init();`, at the start of `BattleLogic.Run()`, then *File > Save Module*.
 2. **Server.** Copy `server/` anywhere (for example `C:\ugcw-ai`) and run `python planner_server.py`.
 3. **Model.** Set `"backend"` in `server/config.json` (`claude_code`, `ollama` or `openai_compatible`).
@@ -52,6 +52,7 @@ Releases, never in the git tree, and only fits the game version it was built fro
 Everything is in [`server/config.json`](server/config.json): backend and model, planning intervals,
 ranges, the server-side doctrine blocks (`plan`, `assault`, `relief`, `guard`, `engage`, `ammo`,
 `supply`, `battery`, `cavalry`), the in-game overlay, and token savings (`economy`, `scale`).
+Every setting, with its default and how to tune it, plus ready-made player profiles: [`docs/configuration.md`](docs/configuration.md).
 See [`docs/token-usage.md`](docs/token-usage.md) for the estimated cost of short and large battles.
 
 ## Tests
@@ -73,5 +74,10 @@ bug reports. Code comments and log lines are in English. Never commit game files
 
 - Design and approach: [rome-battle-ai](https://github.com/Cegli865/rome-battle-ai) by Cegli865 (MIT).
 - Ultimate General: Civil War is a game by Game-Labs. This project is not affiliated with Game-Labs.
-- Some players use it together with the Rebalance mod; the plugin works with or without it.
+- The plugin works with or without the J&P Rebalance mod. `server/perks/` holds the perk bonus files of
+  J&P Rebalance 1.29.1 by its authors, used to explain perk effects to the model.
 - Released under the [MIT License](LICENSE).
+
+## Feedback and Support
+
+Join the J&P Discord and reach out there in the J&P Rebalance Mod channels: https://discord.gg/NmHUGvq

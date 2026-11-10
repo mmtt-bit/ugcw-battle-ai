@@ -329,7 +329,7 @@ def record(report, backend_name=None):
     sb["battles"] += 1
     sb["points"] += report["points"]
     key = {"victory": "victories", "draw": "draws", "defeat": "defeats",
-           "no_contest": "no_contest"}.get(report["outcome"], "unknown")
+           "no_contest": "no_contest", "interrupted": "interrupted"}.get(report["outcome"], "unknown")
     sb[key] = sb.get(key, 0) + 1
     sb["men_lost"] += report["own_men_lost"]
     sb["enemy_men_lost_seen"] += report["enemy_men_lost_seen"]
@@ -367,4 +367,5 @@ def scoreboard_line(sb):
     return (f"Total: {sb['points']} point(s) in {sb['battles']} battle(s) "
             f"({sb['victories']} won, {sb['draws']} drawn, {sb['defeats']} lost"
             + (f", {sb['unknown']} unknown" if sb.get("unknown") else "")
-            + (f", {sb['no_contest']} with no fighting" if sb.get("no_contest") else "") + ").")
+            + (f", {sb['no_contest']} with no fighting" if sb.get("no_contest") else "")
+            + (f", {sb['interrupted']} interrupted" if sb.get("interrupted") else "") + ").")

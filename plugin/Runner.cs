@@ -33,6 +33,7 @@ namespace UgcwAi
 			{
 				AiThoughtsPanel.Visible = !AiThoughtsPanel.Visible;
 			}
+			Reflexes.Tick(Commands.AwaitingPlan);   // fast reactions between two planning turns (no model call)
 			int num = 0;
 			string line;
 			while (num++ < 20 && Bridge.TryReceive(out line))

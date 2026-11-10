@@ -1,6 +1,12 @@
-UGCW AI COMMANDER  -  v0.1.2-beta (2026-11-10)
+UGCW BATTLE AI  -  v0.1.3-beta (2026-11-10)
 An LLM that commands the AI army in Ultimate General: Civil War
 =====================================================================
+
+
+FEEDBACK AND SUPPORT
+--------------------
+Questions, bug reports, feedback or ideas: join the J&P Discord and reach out there in the
+J&P Rebalance Mod channels: https://discord.gg/NmHUGvq
 
 WHAT IT IS
 ----------
@@ -419,3 +425,127 @@ SHORT AND LARGE BATTLES (v0.1.2-beta, config.json "scale")
   ("battle_size").
 - Estimated prompt per model call (synthetic test, 25 vs 60 units of yours): see the 2026-11-10 notes; the real
   numbers are printed by the server after each call (tokens) and in the battle report.
+
+PERKS OF THE J&P REBALANCE MOD (v0.1.3-beta, config.json "perks")
+- perks/jp-rebalance-1.29.1/ holds the mod's bonus files (InfantryPerksBonuses.txt, SkirmisherPerksBonuses.txt,
+  ArtilleryPerksBonuses.txt, CorpsPerksBonuses.txt). At start the server prints "Perk bonuses: ..." with the kinds found.
+- The system prompt gets a PERKS block (what every perk does for each unit kind); the roster shows each brigade's
+  perks by their internal names and the "perk roles" they add up to (fire, assault, steady, scout, cover, mobile).
+- The assault group prefers brigades with assault perks; the scouting cavalry prefers spotting / stealth perks.
+- Cavalry perks too (CavalryPerksBonuses.txt). An effect's last field is the unit kind it applies
+  to: "Skirmish" in the cavalry file means only while dismounted; in the corps file it means on skirmishers.
+- RotationSpeed = how fast a unit pivots to change its firing angle (role "flexible"); CommandRadius = how far a
+  general's corps bonuses reach his brigades (the rules tell the AI to keep its brigades inside it).
+- For another Rebalance version, copy its files from <game>/Mod/Rebalance/Data/ into a new folder and point
+  "perks.folder" at it.
+- Values are read as multipliers ("*"): .3 = +30 %. Reload is a reload time (negative = faster).
+
+MOUNTED AND DISMOUNTED CAVALRY, GENERALS AND COMMAND RADIUS (v0.1.3-beta)
+- The plugin sends each cavalry unit's mode ("mount": mounted, dismounting, dismounted, mounting) and whether it may
+  dismount ("canDismount": the game forbids it to shock cavalry, by weapon melee damage, and inside fortifications).
+  New order {"cmd":"mount","id":N,"value":"dismount"|"mount"}, executed like the game's dismount button.
+  The server drops dismount orders the game would refuse and charges by dismounted cavalry; dismounted cavalry may
+  stand in the line (no "exposed cavalry" drop) and does not ride down skirmishers.
+- The plugin sends every unit's corps ("corps") and each general's command radius ("commandRadius"). The prompt has a
+  GENERALS block (brigades of his corps inside his radius); the model may move generals ("move" only); a general move
+  ending within 650 of a known enemy is pulled back behind his brigades; an idle general is moved by the server when
+  fewer than 60 % of his brigades are inside his radius or an enemy comes within 450 (config.json "generals").
+- DLL: recompile UnitExtras.cs, then Commands.cs (new "mount" command), then File > Save Module. With an older DLL the
+  server still works: no mount state, no corps, the GENERALS block says the corps is unknown.
+
+REFLEXES IN THE PLUGIN (v0.1.3-beta, Reflexes.cs, config.json "reflexes")
+- Fast reactions run by the plugin every half second of play, between two planning turns, without calling the model
+  (no tokens): FACE (turn to a flank or rear threat), BRACE (stop and fire at a charger, cavalry meets a charge, a fresh
+  neighbour charges an enemy locked in melee with one of your units), SAFETY (battery to canister and back when
+  uncovered, wagon and general move away, a unit whose morale collapses in contact falls back).
+- The server sends the settings at the first state of each battle; reflexes stay off in dry run and with an older DLL.
+- Each reflex writes an event; the next turn shows them under REFLEXES SINCE YOUR LAST TURN (at most 8 lines) and the
+  battle report counts them. They never trigger a turn by themselves.
+- Since urgent reactions no longer wait for the model, turns in contact come every 90 s instead of 60
+  ("reflexes.engaged_interval_s"): about a third fewer model calls.
+- DLL: add Reflexes.cs, then recompile Commands.cs, Snapshot.cs and Runner.cs, then File > Save Module.
+
+PHASES, TEMPO, HIDDEN TROOPS AND SLOW GROUND (v0.1.3-beta, after the Shiloh test of 2026-11-10)
+- Phase objectives: in multi-phase battles (Shiloh) the goals name the objectives of the whole battle (Pittsburg
+  Landing). When the chosen way to win needs objectives that are not on this map, the plan targets this map's
+  objective (the church) and attacks it (PHASE OBJECTIVE); the assault group now works there.
+- Stop-loss: no longer trips before 5 minutes of contact or on losses with no enemy losses seen (hidden shooters are
+  shown as UNSEEN FIRE instead). In an attack it no longer cancels the assault: staging goes on, only the launch waits.
+- Tempo: the assault group goes in when 50 % of it has arrived if it is twice as strong as the defenders, and in any
+  case from minute 35 ("assault.latest_launch_minutes").
+- Slow ground (from the game's terrain tooltips): the staging area is chosen so that the approach to the objective
+  crosses the least woods; charges through mostly slow ground, or too long at real speed, become attacks; artillery
+  and wagon destinations in woods are moved to open ground ("terrain_rules").
+- Unseen fire, for every kind of unit: a unit losing men while no visible enemy stands within its own fire range
+  (shooters hidden in woods or wheat, camouflaged by a perk, or out-ranging it) is listed under UNSEEN FIRE and,
+  if left without orders, answered by the plugin's UNSEEN reflex and by the server according to the general's
+  aggressiveness ("doctrine.aggressiveness", 0 careful .. 1 aggressive, 0.5 if unset):
+    aggressive (>= 0.7): fresh infantry or mounted cavalry charges a skirmisher or shaken enemy within 400; fresh
+                         infantry and skirmishers advance on the shooters;
+    balanced (0.4-0.7):  fresh infantry and skirmishers close in on a visible enemy just out of their range;
+    careful (< 0.4):     the unit opens the distance (also any tired unit, artillery and wagons; cavalry otherwise).
+- Battle timer read from the game (TIME LEFT): the assault launches at the latest once 70 % of the timer is left
+  ("assault.launch_time_share").
+- Assault members whose line of fire is blocked by a friendly unit sidestep to a clear lane.
+- "doctrine.aggressiveness" sets at once the attack, stop-loss, assault and fire-answer settings (see CONFIGURATION.md).
+- Cavalry: no automatic ride-down on targets next to woods or through slow ground, and at most 2 per 10 minutes per
+  brigade.
+- At most 8 moves per turn are accepted; short sidesteps to clear a fire lane do not count. Units still on their way
+  are marked MARCHING.
+- DLL: recompile Reflexes.cs and MissionGoals.cs (already done in game-dll/Assembly-CSharp.dll).
+
+ASSAULT MARCH, COVER AND CAVALRY (v0.1.3-beta, after the third Shiloh test of 2026-11-10)
+- Mission timer read from the timer goals (MissionGoal.TimerMandatory / TimerRecommended), plus the battle clock and
+  the end of day; the plugin logs "Mission timer: ..." once per battle. A TEMPO line in the ASSAULT PLAN gives the
+  launch deadline, the march time to the objective and "BEHIND SCHEDULE" when the march takes longer.
+- Launch: the staging timeout counts from the first arrival in the staging area, not from the start of staging;
+  defenders seen in the last 10 minutes and hidden now still count in the strength ratio.
+- Launched brigades far from their target march to a firing position near it (cover preferred: wheat, woods' edge,
+  fortifications) instead of an "attack" order from far away, keep their target while it is in sight, hold in cover
+  once in range, and charge shaken defenders (any defender at 2:1 with an aggressive doctrine), never through slow
+  ground.
+- Units trading fire from open ground step to cover nearby when it keeps the enemy in range.
+- Routes: long moves follow the fastest ground and the roads as waypoints (plugin Commands.cs: "path"), the units
+  face the next leg at each bend; long marches are no longer re-sent every 4 minutes (pending time follows the
+  length of the march); units outside the playing field at a new phase first walk into it.
+- Phases: launch minutes, TEMPO and reserve commits count from the start of the phase (Shiloh phase 2 starts at
+  minute 75).
+- Charges of the assault group: from 200 at most and several brigades in the same turn; aggressive doctrine sends
+  every fit brigade but one, nearest to the objective first.
+- Mixed command: the model is the army commander (macro) and the server its staff (micro). In its answer the model
+  may give "assaults" (at most 2): objective, brigades, approach side, launch now / wait / auto / release. The
+  server keeps that command and runs it every turn: routes, staging, covered firing positions, fire lanes,
+  targets, charges together, pull-backs. Without "assaults" the server picks the objective and the group itself.
+- The AI panel empties at the end of the battle and when the server disconnects; the order arrows of the AI's
+  units are hidden (overlay.show_ai_orders = true shows them, for testing).
+- Phase 3 of Shiloh: the map's own objectives that no goal names (Hornet's Nest) are phase objectives too; with two
+  objectives to take and enough brigades the server runs one assault on each (or the model commands both).
+- TIME LEFT is given in minutes ("107 minutes (1 h 47 min)"): the model had read "1:47" as one minute.
+- Cohesion: no lone brigade far from the army and the objectives (recall, fallback first in contact); chases of
+  skirmishers or cavalry on a leash (450 from friends), a stopped brigade under fire steps back out of reach.
+- Time as a share of the phase: TIME LEFT and TEMPO give the share of the phase's time used and left (read from
+  the game, right after loading a save too); assault deadline and reserve commits follow that share.
+- Units far from every enemy get a short line in short battles too (batteries keep the full line); "facing
+  enemy" is no longer written (only oblique / side / back).
+- A battle left without an end screen (saved and quit) is reported as "interrupted": no points, not a defeat.
+  Resuming the save starts a new report; the server rebuilds its plan from the state.
+- Fewer, lighter model calls: the model is called for the big picture (a sizeable new enemy force, a brigade
+  breaking, heavy losses, objectives, plan changes), at least every 330 battle seconds; the prompt is shorter
+  (positions rounded to 10, full strength / full ammunition / ammo mode auto / mounted not written, enemy
+  equipment as bore, stars and perks, your brigades' fixed equipment only in the cached roster). On recorded
+  battles: about 30 to 45 % fewer prompt characters per battle.
+- Two assaults of the same turn (pincer or two objectives) launch together; two assaults on the same objective
+  no longer share their losses (a false "released after losses" stopped them).
+- Charge distance by the ground: 500 over open ground, 200 through woods; at 200 a fresh brigade charges.
+- Final charge: with 20 minutes left, every fresh brigade (morale 0.7+) closes to charge distance of the
+  objective's defenders and all charge together (at 12 minutes left at the latest).
+- Mounted cavalry: no automatic advances or carbine duels, attack / range_attack orders beyond its carbines dropped,
+  impossible charges dropped (a server charge becomes a pull-back); the UNSEEN reflex sums losses over 60 s so slow
+  attrition triggers it.
+
+CREDITS AND LICENCE NOTES (v0.1.3-beta)
+- UGCW Battle AI follows the design of rome-battle-ai by Cegli865 (https://github.com/Cegli865/rome-battle-ai, MIT).
+- game-dll/Assembly-CSharp.dll is a copy of the game's assembly with the plugin added. The game is Ultimate General: Civil War
+  by Game-Labs; the mod author states that the developers agreed to this DLL being shared. It also contains the J&P Rebalance mod (v1.29.1),
+  the work of its own authors, and server/perks/ holds that mod's perk bonus files.
+- Keep a backup of your original Assembly-CSharp.dll before replacing it.

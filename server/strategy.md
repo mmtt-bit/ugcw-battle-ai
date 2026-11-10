@@ -2,12 +2,40 @@ Strategy notes for the AI commander. Edit freely: re-read at every planning paus
 from recorded battles. (The previous version is kept in old/strategy.2026-11-09.md.)
 
 TEMPO
-- Contact is not the goal; the objective is. By minute 10 name the objective to take or hold and write the attack
-  plan. Commit the freshest brigades to it by minute 20 and the reserve by minute 30. Still losing the exchange at
-  minute 60 with no objective in hand: stop trading, concentrate on one point and attack it, or fall back onto an
-  objective you hold.
+- Contact is not the goal; the objective is. Time is counted as a share of the phase's time (TEMPO). By 10 % of it
+  name the objective to take or hold and write the attack plan. Commit the freshest brigades to it by 25 % and the
+  reserve by 40 %. Still losing the exchange at 70 % with no objective in hand: stop trading, concentrate on one
+  point and attack it, or fall back onto an objective you hold. (Without a battle timer: minutes 10, 20, 30, 60.)
+- With the enemy near the objective (visible and seen recently, see TEMPO in the ASSAULT PLAN) under a third of your
+  strength, launch the assault group at once; do not wait for the rear brigades or the batteries. In woods the
+  enemy you see is rarely all the enemy there is: two brigades alone are not an assault.
+- Watch the clock every turn (TEMPO, TIME LEFT, CLOCK): a phase objective not taken by the end of the timer is a
+  lost battle, however well the line is formed. If the march to the point takes longer than the time to the launch
+  deadline, you are behind schedule: march now, form the line on the way, and let the late brigades join.
+- An assault is a march to firing positions close to the defenders (cover first: wheat, woods' edge,
+  fortifications), a few volleys to shake them, then charges. The server marches launched brigades to such
+  positions and charges shaken defenders; give the rest of the army orders that feed the assault.
 - Fire at the edge of fire range only to shake the enemy so that a charge succeeds; never trade volleys there for
   many turns. Battles are decided by charges on shaken units.
+
+COMMAND
+- You command the army; the server is your staff. Decide which objectives to take and in what order, which
+  brigades assault each one ("assaults" in your answer), from which side, and when they go in. With an aggressive
+  doctrine and two objectives within reach, two assault groups at once beat one group after the other. Keep one
+  brigade in reserve, the batteries on the fixing fire targets and the cavalry on the weak side.
+
+SYNCHRONISED ASSAULTS AND THE LAST THROW
+- Two assaults launched together force the player to split his attention: same objective from two sides, or two
+  objectives at once. The server waits until both are ready.
+- With 20 minutes left and the objective still the enemy's, everything fresh goes in: close to charge distance,
+  then all charge at once. Prepare it: batteries on the defenders, cavalry on their flank, fresh brigades kept
+  fresh for it.
+
+COHESION
+- Brigades fight together. Never send one brigade alone far from the army into ground that holds no objective:
+  only scouts (cavalry, skirmishers) go out alone. Do not chase skirmishers or cavalry with a line brigade: they
+  fall back faster than it can follow and lead it into a trap. The server stops such chases and brings isolated
+  brigades back.
 
 SCOUT, FORM, SHOOT, CHARGE, EXPLOIT
 1. Scout first: skirmishers and cavalry ahead, the main body 500+ behind. If they find an unexpected force or battery,

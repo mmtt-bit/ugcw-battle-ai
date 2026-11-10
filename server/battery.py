@@ -85,7 +85,7 @@ def battery_lines(state, cfg=None):
             e, d = near
             txt += f", nearest enemy {e['name']} (#{e['id']}) at {d:.0f}"
             if state_txt in ("packed", "packing"):
-                txt += ": PACKED, it cannot fire; unpack it with the limber order (value unpack); the server also does it for a battery that is not marching"
+                txt += ": PACKED, cannot fire (limber unpack)"
                 if d <= r:
                     txt += " NOW (enemy already in range)"
             elif state_txt == "unpacking":
@@ -127,7 +127,9 @@ def unpack_orders(state, orders, pending_moves=None, stats=None, tries=None):
         if limber_state(u) not in ("packed", "packing"):
             tries.pop(u["id"], None)
             continue
-        if u["id"] in moving or u["id"] in (pending_moves or {}):
+        if u["id"] in moving or u["id"] in (pending_moves or {}) or "inMove=True" in str(u.get("limberInfo") or ""):
+            # still on its march (the plugin's state says inMove): unpacking now would stop it where it is.
+            # In the Shiloh battle of 2026-11-10, 13 of 14 automatic unpacks hit marching batteries.
             tries.pop(u["id"], None)
             continue
         if any(o["id"] == u["id"] and o["cmd"] == "limber" for o in orders):
