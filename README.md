@@ -6,7 +6,7 @@ seconds of play the game pauses, the battlefield is sent to a small Python serve
 orders, the server checks them against the rules of the game, and the game resumes.
 
 It follows the design of [rome-battle-ai](https://github.com/Cegli865/rome-battle-ai) by Cegli865
-(Total War: ROME REMASTERED), adapted to Ultimate General: Civil War (Unity 5.4.4, Mono).
+(Total War: ROME REMASTERED), adapted to Ultimate General: Civil War version 1.11 rev.22986 (Unity 5.4.4, Mono).
 
 > **Status: beta (v0.1.2-beta).** Tested on a few missions, one battle at a time, on Windows.
 > Expect rough edges. Bug reports with the server console text and the files in `logs/` and
