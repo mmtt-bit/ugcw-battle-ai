@@ -1,4 +1,4 @@
-UGCW BATTLE AI  -  v0.1.3-beta (2026-11-10)
+UGCW BATTLE AI  -  v0.1.4-beta (unreleased, 2026-11-11)
 An LLM that commands the AI army in Ultimate General: Civil War
 =====================================================================
 
@@ -11,8 +11,9 @@ J&P Rebalance Mod channels: https://discord.gg/NmHUGvq
 WHAT IT IS
 ----------
 A mod that lets a large language model play the computer-controlled side (the South in
-the default setup) while you play the other one. Every few seconds of play the game pauses,
-sends the battlefield to a small Python server, the server asks the model for orders, checks
+the default setup) while you play the other one. Every few seconds of play the game sends the
+battlefield to a small Python server. The server runs its own staff work (assaults, relief, cover,
+cohesion) at once and, when a decision is needed, pauses the game, asks the model for orders, checks
 them against the rules of the game, sends them back, and the game resumes.
 
 It has two parts:
@@ -56,7 +57,7 @@ Step 2. Install the Python server
   a. Create a folder, for example C:\ugcw-ai.
   b. Copy into it everything from the "server" folder of this package: planner_server.py, prompting.py,
      situation.py, equipment.py, autopilot.py, relief.py, assault.py, battery.py, cavalry.py, supply.py,
-     report.py, assessment.py, goals.py, backends.py, terrain.py, show_log.py, rescore.py,
+     report.py, assessment.py, goals.py, backends.py, terrain.py, march.py, show_log.py, rescore.py,
      config.json, strategy.md, game_rules.md.
      All the .py files must come from the same release: mixing old and new files causes
      errors such as "takes from 3 to 6 positional arguments but 7 were given".
@@ -66,13 +67,14 @@ Step 2. Install the Python server
      console shows the terrain, each planning turn, the model's reasoning and the orders.
 
 Step 3. First test
-  - Keep "dry_run": true in config.json for the first test. The model is queried and its
-    orders are logged, but nothing is sent to the game, so you can read what it would do.
-  - Set "dry_run": false to let it command the army.
+  - "dry_run" is false in the config.json of this package: the model commands the army.
+  - To only read what it would do, set "dry_run": true: the model is queried and its orders are
+    logged, but nothing is sent and the game's own AI fights (the in-game panel then shows
+    "DRY RUN"). Such a battle is kept apart in the scoreboard ("dry_runs"), not counted for the model.
   - Add --prompts when reading a log (see "LOGS AND REPORTS") to see exactly what the model saw.
 
 Building the plugin yourself (dnSpy)
-  See PLUGIN_INSTALL.txt (11 classes in plugin-source plus one line in BattleLogic.Run). Always "File > Save Module"
+  See PLUGIN_INSTALL.txt (12 classes in plugin-source plus one line in BattleLogic.Run). Always "File > Save Module"
   afterwards, and open the DLL from the game's Managed folder.
 
 
@@ -102,7 +104,7 @@ Step 2. Install the Python server
   a. Create a folder, for example C:\ugcw-ai.
   b. Copy into it everything from the "server" folder of this package: planner_server.py, prompting.py,
      situation.py, equipment.py, autopilot.py, relief.py, assault.py, battery.py, cavalry.py, supply.py,
-     report.py, assessment.py, goals.py, backends.py, terrain.py, show_log.py, rescore.py,
+     report.py, assessment.py, goals.py, backends.py, terrain.py, march.py, show_log.py, rescore.py,
      config.json, strategy.md, game_rules.md.
      All the .py files must come from the same release: mixing old and new files causes
      errors such as "takes from 3 to 6 positional arguments but 7 were given".
@@ -112,14 +114,15 @@ Step 2. Install the Python server
      console shows the terrain, each planning turn, the model's reasoning and the orders.
 
 Step 3. First test
-  - Keep "dry_run": true in config.json for the first test. The model is queried and its
-    orders are logged, but nothing is sent to the game, so you can read what it would do.
-  - Set "dry_run": false to let it command the army.
+  - "dry_run" is false in the config.json of this package: the model commands the army.
+  - To only read what it would do, set "dry_run": true: the model is queried and its orders are
+    logged, but nothing is sent and the game's own AI fights (the in-game panel then shows
+    "DRY RUN"). Such a battle is kept apart in the scoreboard ("dry_runs"), not counted for the model.
   - Add --prompts when reading a log (see "LOGS AND REPORTS") to see exactly what the model saw.
 
 If you want to rebuild the plugin yourself (dnSpy)
-  The plugin source files are C# classes in the UgcwAi namespace: Bridge, Commands, Snapshot,
-  TerrainScan, BattleResult, MissionGoals, UnitExtras, AiThoughtsPanel, plus the Runner hook (TerrainScan.Objectives must be "internal static"). In dnSpy: open Assembly-CSharp.dll,
+  The plugin source files are 12 C# classes in the UgcwAi namespace: Bridge, Orders, AiThoughtsPanel,
+  UnitExtras, Reflexes, MissionGoals, Commands, TerrainScan, BattleResult, Snapshot, Runner, Bootstrap (TerrainScan.Objectives must be "internal static"). In dnSpy: open Assembly-CSharp.dll,
   right-click the namespace > Add Class (or Edit Class), paste, Compile, then File > Save Module.
   Forgetting "Save Module" is the most common reason why changes do not appear in the game.
   The one-line hooks to add in existing methods are:
@@ -153,10 +156,10 @@ Set "backend" in config.json. Every backend has its own block in the same file.
    - Test:   claude -p "say hello"
    - config.json:  "backend": "claude_code",  "claude_code": { "model": "sonnet", ... }
      ("model" accepts an alias such as sonnet or opus, or a full model name.)
-   - Each planning turn is one call with a prompt of several thousand tokens. A long battle
-     can make dozens of calls and counts against your subscription's usage limits. To save
-     usage: raise "engaged_interval_s" (for example from 30 to 60), lower
-     "max_orders_per_cycle", use a cheaper model, or start with a short battle.
+   - Each model call sends a prompt of several thousand tokens. A long battle makes a dozen
+     calls or more and counts against your subscription's usage limits. To save usage: raise
+     "economy" > "min_call_gap_s" (for example from 150 to 240), use a cheaper model, or
+     start with a short battle.
    - A Claude Pro subscription does not include the Anthropic API. An API key from the
      Claude Console is a separate product and is not supported by the current backends.
 
@@ -284,7 +287,10 @@ LOGS AND REPORTS
 
   python rescore.py                     recompute the result of every recorded battle with the mission
                                         rule (dry run; add --apply to write, a backup is kept)
-  python fix_scoreboard.py              dry run: shows what it would correct in the scoreboard
+  python fix_scoreboard.py              shows what it would correct in the scoreboard (writes nothing):
+                                        battles fought by the game's own AI (dry run, found in logs/ or
+                                        given with --game-ai "<ended>") move to "dry_runs"; "unknown"
+                                        results become defeats; totals and the per-model lines are fixed
   python fix_scoreboard.py --apply      writes the corrected scoreboard (with a backup; nothing is
                                         deleted)
 
@@ -410,9 +416,41 @@ TOKEN SAVINGS (v0.1.1-beta, config.json "economy")
   fixed, the River-crossing-only mission notes removed: the MISSION GOALS block read from the game replaces them).
   The previous versions are in the "old" folder.
 - skip_quiet_turns: no model call when nothing changed that needs a decision (no new enemy, no unit status change, no
-  morale drop of morale_drop or more, losses under loss_men, no event, plan unchanged); at most max_consecutive_skips in
-  a row and never more than max_gap_s seconds of battle without a call. The server automatons still run those turns.
-  Raise morale_drop (0.15 or 0.2) to skip more turns in heavy fighting.
+  morale drop of morale_drop or more, losses under loss_men, no event, plan unchanged) and never more than max_gap_s
+  seconds of battle without a call. The server automatons still run those turns. (Rewritten in 0.1.4: see below.)
+
+MODEL CALLS FOR DECISIONS ONLY, STAFF WORK AT EVERY STATE (v0.1.4-beta, config.json "economy" and "timing")
+- The model is the commander: it is called at once for a critical event (an objective changes hands, the plan mode
+  changes, a brigade breaks), otherwise at most every min_call_gap_s (150 battle seconds) for an ordinary reason (its
+  orders are carried out, a sizeable new enemy force, several brigades shaken, heavy losses, reinforcements, an assault
+  launched or released), and in any case every max_gap_s (420).
+- The server is the staff: assaults, relief of broken brigades, cover, cohesion, generals and wagons run at every state
+  the game sends, model call or not. With the 0.1.4 DLL a state comes every staff_interval_s (30 game seconds) in
+  contact and does not pause the game; the game pauses only while the model thinks ("freeze" ... "plan_done").
+  With the 0.1.3 DLL everything works as before (a short pause at every state, every 90 s in contact).
+- A lost or invalid model answer no longer loses the turn: the staff work runs, the answer is repaired when it can be
+  (extra brace, trailing comma, cut-off end), and the model is asked again at the next state, then less and less often
+  if it keeps failing (retry_backoff_s).
+- The turn prompt is compact: what is normal is not written (READING THE STATE in the system prompt explains the
+  format). Late brigades keep their equipment in the unit table instead of rewriting the cached system prompt
+  (roster_max_folds 0).
+- "assaults": [] in an answer means "nothing to change"; "launch": "release" hands an assault back to the server.
+- Captured units change side in the game: they are counted for the side they fought for (report, kill/death, calls).
+- Estimated on replays of three recorded battles: 12 to 14 model calls instead of 16 to 29, and 46 to 63 % fewer
+  tokens written than 0.1.3. Not measured in game yet. Details: docs/token-usage.md.
+- DLL: recompile Bridge.cs, Reflexes.cs, Commands.cs and Runner.cs (in this order), then File > Save Module.
+
+ARTILLERY, WAGONS, ROTATION AND ASSAULTS (v0.1.4-beta, after the Shiloh battle of 2026-11-11)
+- Batteries: the server brings the batteries you leave without orders to their firing spot. Smoothbore guns
+  (Napoleons, howitzers, 6-pdr guns) go about 420 from the enemy, beside a steady brigade of the line, to fire
+  canister; rifled guns stand at 80 % of their range behind the line ("battery" block).
+- Wagons wait about 750 behind the line and drive up when two or more units of the line run low on ammunition, behind
+  them and behind a steady brigade, then go back ("supply" block).
+- Rotation: a brigade pulled back for low morale goes forward again from 0.75 on a quiet front, 0.7 in a fight, 0.65
+  in a crisis; brigades joining an assault or the final charge need 0.8 (ROTATION line in the prompt).
+- Assaults: the weakest defender is the WEAK POINT and the first target, taken in the flank when its facing is known.
+  Fresh brigades good in melee charge steady defenders together, and any brigade on a target's flank charges it.
+  Brigades trading fire look for the best covered spot in range instead of chasing their target in the open.
 
 SHORT AND LARGE BATTLES (v0.1.2-beta, config.json "scale")
 - The server counts your combat units (infantry, cavalry, artillery, skirmishers) and prints "Battle size: small" or
@@ -505,7 +543,9 @@ ASSAULT MARCH, COVER AND CAVALRY (v0.1.3-beta, after the third Shiloh test of 20
   once in range, and charge shaken defenders (any defender at 2:1 with an aggressive doctrine), never through slow
   ground.
 - Units trading fire from open ground step to cover nearby when it keeps the enemy in range.
-- Routes: long moves follow the fastest ground and the roads as waypoints (plugin Commands.cs: "path"), the units
+- March columns: infantry marching 500+ goes in road column and deploys in line 600 from a known enemy
+  (server, "march" in config.json; to be tested in game).
+- Routes: long moves follow the fastest ground as waypoints (plugin Commands.cs: "path"), the units
   face the next leg at each bend; long marches are no longer re-sent every 4 minutes (pending time follows the
   length of the march); units outside the playing field at a new phase first walk into it.
 - Phases: launch minutes, TEMPO and reserve commits count from the start of the phase (Shiloh phase 2 starts at
@@ -543,7 +583,7 @@ ASSAULT MARCH, COVER AND CAVALRY (v0.1.3-beta, after the third Shiloh test of 20
   impossible charges dropped (a server charge becomes a pull-back); the UNSEEN reflex sums losses over 60 s so slow
   attrition triggers it.
 
-CREDITS AND LICENCE NOTES (v0.1.3-beta)
+CREDITS AND LICENCE NOTES (v0.1.4-beta)
 - UGCW Battle AI follows the design of rome-battle-ai by Cegli865 (https://github.com/Cegli865/rome-battle-ai, MIT).
 - game-dll/Assembly-CSharp.dll is a copy of the game's assembly with the plugin added. The game is Ultimate General: Civil War
   by Game-Labs; the mod author states that the developers agreed to this DLL being shared. It also contains the J&P Rebalance mod (v1.29.1),

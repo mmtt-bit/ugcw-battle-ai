@@ -33,14 +33,15 @@ namespace UgcwAi
 			{
 				AiThoughtsPanel.Visible = !AiThoughtsPanel.Visible;
 			}
-			Reflexes.Tick(Commands.AwaitingPlan);   // fast reactions between two planning turns (no model call)
+			Commands.Tick();                  // next legs of the waypoint routes
+			Reflexes.Tick(Commands.Frozen);   // fast reactions between two model calls (not while the game is paused for one)
 			int num = 0;
 			string line;
 			while (num++ < 20 && Bridge.TryReceive(out line))
 			{
 				Commands.Execute(line);
 			}
-			if (Commands.AwaitingPlan && (!Bridge.Connected || Time.realtimeSinceStartup - Commands.AwaitingSince > 90f))
+			if (Commands.AwaitingPlan && (!Bridge.Connected || Commands.TimedOut()))
 			{
 				Debug.LogWarning("[UgcwAi] Planner timeout or disconnect, resuming the game");
 				Commands.EndPlan();
@@ -50,16 +51,12 @@ namespace UgcwAi
 				string text = Snapshot.Build();
 				if (text != null)
 				{
-					Bridge.Send(text);
+					// The state does not pause the game any more: the server answers most states at once with
+					// its own orders, and sends "freeze" when it calls the model (Commands.Freeze).
+					Bridge.Send(Commands.Stamp(text));
 					Commands.BeginPlan();
 				}
 			}
-			if (Time.realtimeSinceStartup < this.next)
-			{
-				return;
-			}
-			this.next = Time.realtimeSinceStartup + 2f;
-			Runner.LogState();
 		}
 
 		// Token: 0x06001DDC RID: 7644 RVA: 0x000C6E60 File Offset: 0x000C5060
@@ -122,11 +119,14 @@ namespace UgcwAi
 				UnitManager instance = MonoBehaviourSingleton<UnitManager>.instance;
 				if (!(instance == null))
 				{
+					Runner.LogState();   // the unit dump (it was written every 2 seconds before 0.1.4: megabytes of log)
 					int num = 0;
 					for (int i = 0; i < instance.unitsCount; i++)
 					{
 						UnitModel unitModel = instance.units[i];
-						if (unitModel != null && unitModel.IsAlive && unitModel.side != RuntimeVars.playerSide && unitModel.IsUnderAIControl)
+						// units still off the field (reinforcements at the map edge) stay with the game's AI until they enter
+						if (unitModel != null && unitModel.IsAlive && unitModel.side != RuntimeVars.playerSide && unitModel.IsUnderAIControl
+							&& Commands.OnField(unitModel))
 						{
 							unitModel.aiData.commander.RemoveUnit(unitModel);
 							num++;

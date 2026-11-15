@@ -103,6 +103,15 @@ PLAN_DEFAULTS = {
     "stop_loss_min": 100,        # ...and at least this many men lost in those 10 minutes (floor)...
     "stop_loss_share": 0.01,     # ...or this share of the AI army (all men that took part), whichever is larger
     "stop_loss_hold_s": 480,     # once triggered, the stop-loss (TRADE) lasts at least this long, then the attack resumes
+    "stop_loss_cooldown_s": 600,  # after a pause ends it cannot trip again for this long (0.1.4 WIP7)
+    "take_unheld": True,          # an unheld objective the player needs is a target (0.1.4 WIP7)
+    "secure_when_superior": True,  # with the numbers, an objective the player's victory needs is taken even when
+    "secure_ratio": 1.5,           # the route to a win is a casualty ratio (0.1.4 WIP7)
+    "secure_keep_ratio": 1.1,      # ...and stays the target down to this ratio once chosen
+    # WIP12 (Thoroughfare Gap, 2026-11-13 15:48): every condition was met at the start, so the plan said DEFEND
+    # while 9,324 men faced 1,598 visible at 21 min (5.8 to 1). With this ratio over the enemy seen, an objective
+    # the player holds or nobody holds is taken even then.
+    "secure_idle_ratio": 2.0,
     "force_stop_loss": False,    # set by the server while a triggered stop-loss is still running
     "stop_loss_min_contact": 5,  # minutes in contact before the stop-loss can trip (losses to unseen fire before
                                  # contact are hidden troops to find, not a fire fight to stop)
@@ -112,6 +121,13 @@ PLAN_DEFAULTS = {
     "min_casualties": 300,       # floor; the real threshold is the larger of this and min_casualties_share x army
     "min_casualties_share": 0.02,       # below this many men lost (both sides) a kill ratio means nothing yet
     "recoverable_kd": 0.65,      # estimated kill/death under this after that time = far behind
+    # 0.1.4 WIP4 (battle of 2026-11-11 15:27: an assault at a force ratio of 0.39 was called off 8 times by the
+    # model and put back each time by this plan, which named the attack "by default"):
+    "abandon_ratio": 0.5,        # force ratio under which an assault that has not gone in is abandoned for good
+    "abandon_ratio_kd_bonus": 0.1,   # ...raised by this much when a casualty ratio is among the mission goals
+    "abandon_minute": 20,        # ...checked from this minute of the map on (the server keeps the decision)
+    "resume_ratio": 0.8,         # an abandoned assault may be planned again only above this force ratio
+    "force_abandon": False,      # set by the server while the assault is abandoned
 }
 
 
@@ -191,6 +207,7 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
     player = state["playerSide"]
     mine = [u for u in state["units"] if u["side"] != player]
     foes = [u for u in state["units"] if u["side"] == player]
+    own_side = mine[0]["side"] if mine else None
     sm, sf = strength(mine), strength(foes)
     overall = sm / sf if sf > 0 else math.inf
 
@@ -225,7 +242,16 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
                     needs.append(("cap", a, obj, ok))
                     hard += 0 if ok else 1
                 else:
-                    done.append(a)
+                    # 0.1.4 WIP7 (battle of 2026-11-12 10:12): "Meeting point" was neutral for 15 minutes while the
+                    # South had the numbers; the plan called the condition met and traded fire, the player walked in.
+                    # An objective nobody holds that the player needs is taken first, while it is cheap.
+                    obj = _objective_for(a["text"], objectives)
+                    if obj is not None and cfg.get("take_unheld", True) and obj.get("side") not in (own_side, player):
+                        ok, _ = cap_feasible(a, thr)
+                        needs.append(("cap", a, obj, ok))
+                        hard += 0 if ok else 1
+                    else:
+                        done.append(a)
             else:
                 if a["state"] and (own_loss + foe_loss) >= cfg["min_casualties"]:   # met by the player: the AI is behind
                     needs.append(("ratio", a, None, not behind_far))
@@ -254,8 +280,12 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
         for k in sorted(reduce(route), key=str):
             a = atoms[k]
             if a["kind"] == "cap":
+                o = _objective_for(a["text"], objectives)
+                unheld = (not a["state"] and o is not None and cfg.get("take_unheld", True)
+                          and o.get("side") not in (own_side, player))
                 parts.append("hold: " + a["text"].replace("Hold ", "").strip()
-                              + (" [the player holds it now]" if a["state"] else " [done]"))
+                              + (" [the player holds it now]" if a["state"] else
+                                 " [nobody holds it: take it before the player does]" if unheld else " [done]"))
             else:
                 parts.append("keep the player from: " + ratio_need(a) + (" [the player meets it now]" if a["state"] else " [done]"))
         return "; ".join(parts) or "nothing to do beyond staying out of defeat"
@@ -288,9 +318,72 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
         caps = [n for n in nd if n[0] == "cap"]
         if caps and not any(n[0] == "ratio" for n in nd) and all(n[3] for n in caps):
             fallback = (dscored[0], caps)
+    has_ratio_goal = any(a["kind"] == "ratio" for a in atoms.values())
+    abandon_thr = float(cfg["abandon_ratio"]) + (float(cfg["abandon_ratio_kd_bonus"]) if has_ratio_goal else 0.0)
+    abandoned = bool(cfg.get("force_abandon"))
+    # (the build-up limit no longer sends a clearly outnumbered army in: under the abandon ratio it keeps building up)
     attack_default = bool(need_cap) and cfg["attack_by_default"] and not fallback and (
-        overall >= cfg["min_attack_ratio"] or minutes_in_contact >= cfg["build_up_minutes"] or sf <= 0)
-    if fallback:
+        overall >= cfg["min_attack_ratio"] or sf <= 0
+        or (minutes_in_contact >= cfg["build_up_minutes"] and overall >= abandon_thr))
+    hold_objs, retake_objs = [], []
+    # With the numbers, an objective the player's victory needs is taken even when the chosen route is a casualty
+    # ratio (see the "secure" branch below)
+    secure = []
+    idle_superior = (not needs and sf > 0
+                     and overall >= float(cfg["secure_keep_ratio"] if cfg.get("secure_latched")
+                                          else cfg.get("secure_idle_ratio", 2.0)))
+    if (not need_cap and not abandoned and cfg.get("secure_when_superior", True)
+            and ((need_ratio and overall >= float(cfg["secure_keep_ratio"] if cfg.get("secure_latched")
+                                                   else cfg["secure_ratio"])) or idle_superior)):
+        # (once chosen, the objective stays the target down to secure_keep_ratio: the visible ratio moves at every
+        # state, and an assault cancelled by the plan going back to TRADE is the worst of both)
+        for a in atoms.values():
+            if a["kind"] != "cap":
+                continue
+            obj = _objective_for(a["text"], objectives)
+            if obj is None or obj.get("side") == own_side or any(n[2] is obj for n in secure):
+                continue
+            secure.append(("cap", a, obj, True))
+    wanted_cap = bool(need_cap or secure)          # the win needs an objective the player holds (kept for the server's latch)
+    if abandoned:
+        # The assault is off for good (see the server's latch): the best result left is the one the goals still
+        # allow without taking the objective, usually a draw by denying the player his other conditions.
+        names = ", ".join((n[2].get("name") if n[2] else n[1]["text"]) for n in need_cap) or "the enemy's objective"
+        best_d = None
+        for route in draw:
+            nd, dn, hd = describe(route, cfg["attack_ratio"])
+            key = (sum(1 for n in nd if n[0] == "cap" and not n[3]), len(nd))
+            if best_d is None or key < best_d[0]:
+                best_d = (key, route, nd)
+        mode = "DEFEND"
+        posture = (f"DEFEND (assault abandoned): {names} is out of reach (force ratio {overall:.2f}, under "
+                   f"{abandon_thr:.2f}). Do not plan, stage or launch any assault on it"
+                   f" until the ratio is above {float(cfg['resume_ratio']):.2f}. ")
+        if best_d is not None:
+            _, d_route, d_needs = best_d
+            for k in sorted(reduce(d_route), key=str):
+                a = atoms[k]
+                if a["kind"] == "cap":
+                    obj = _objective_for(a["text"], objectives)
+                    if obj is not None:
+                        (retake_objs if a["state"] else hold_objs).append(obj)
+            posture += ("Best result left: a DRAW, by denying the player every other condition: "
+                        + route_text(d_route) + ". ")
+            if any(atoms[k]["kind"] == "ratio" for k in d_route):
+                posture += ("The casualty condition is one of them: every man counts, no charge on a steady unit, "
+                            "no brigade left in a losing fire fight. ")
+        else:
+            posture += ("The goals leave no draw: limit the losses (in a campaign they are missing in the next "
+                        "battle) and keep what you hold. ")
+        posture += ("Break contact with the enemy's main body, form one line on good ground (wood's edge, ridge, "
+                    "fortifications) that covers the objectives you hold, batteries behind it and wagons close; "
+                    "fire from cover, counter-attack only shaken or isolated units, rotate early.")
+        if retake_objs:
+            posture += (" Retake " + ", ".join(str(o.get("name")) for o in retake_objs)
+                        + " only when undefended or weakly held (cavalry or one fresh brigade, ONTO the point).")
+        need_cap = []                                  # no assault target: the assault code stands down
+        lines = [l.replace("  <- CHOSEN", "  <- ABANDONED (out of reach)") for l in lines]
+    elif fallback:
         caps = fallback[1]
         names = ", ".join((n[2].get("name") if n[2] else n[1]["text"]) for n in caps)
         lines.append(f"  Fallback (a DRAW, 1 point instead of 0): take {names} so that the player does not win; "
@@ -314,6 +407,19 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
         if need_ratio:
             posture += (" The casualty condition also matters: favour the trades (artillery on the defenders, "
                         "fire before steel, charges only on shaken units).")
+    elif secure:
+        # 0.1.4 WIP7 (battle of 2026-11-12 10:12): the only route to a win was a casualty ratio, so the plan
+        # traded fire with "do not take objectives", at 2 to 4 times the enemy's visible strength, while the
+        # player walked onto the objective his victory needed. With the numbers, take it: it denies the player's
+        # victory (a draw at worst), and an attack with the numbers is also the cheapest way to inflict losses.
+        need_cap = secure
+        names = ", ".join(n[2].get("name") for n in secure)
+        mode = "ATTACK"
+        posture = (f"ATTACK to secure {names}: you have the numbers (force ratio {overall:.2f}) and the player's "
+                   "victory needs it. Take it now, before the player is set on it: an assault group of at least "
+                   "1.5 times the defenders' strength, coming from two sides at once, the rest of the line firing "
+                   "from cover. Holding it denies the player's victory (a draw at worst); the casualty condition "
+                   "is then won by fire from the objective and by captures.")
     elif need_ratio:
         mode = "TRADE"
         why = (f"the casualty condition is the problem (estimated kill/death {kd_est:.2f}"
@@ -351,7 +457,10 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
         t_own, t_foe = trend
         lines.append(f"  TREND (last 10 min): you lost {t_own:.0f} men, the enemy lost {t_foe:.0f} (seen).")
         in_fight = minutes_in_contact >= cfg.get("stop_loss_min_contact", 5) and t_foe > 0
-        tripped = bool(cfg.get("force_stop_loss")) or (in_fight and t_own >= cfg["stop_loss_min"]
+        # a pause that just ended cannot trip again at once (cooldown, set by the server): in the battle of
+        # 2026-11-12 10:12 it re-tripped at every state for 107 minutes and the assault never went in
+        tripped = bool(cfg.get("force_stop_loss")) or (not cfg.get("stop_loss_cooldown") and in_fight
+                                                       and t_own >= cfg["stop_loss_min"]
                                                        and t_own > cfg["stop_loss_ratio"] * max(t_foe, 1.0))
         stop_loss = tripped
         if tripped and mode == "ATTACK":
@@ -361,7 +470,7 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
                         "losses. Keep staging the assault group out of fire and at full strength, rotate out brigades under "
                         "0.6 morale, win the fire fight with the artillery; the launch waits for the pause to end (a few "
                         "minutes). Never use the pause as a reason to stop preparing the attack.")
-        elif tripped and mode != "TRADE":
+        elif tripped and mode != "TRADE" and not abandoned:
             mode = "TRADE"
             posture = ("TRADE (stop-loss): you are losing more than " + f"{cfg['stop_loss_ratio']:.1f}x the enemy's men over the last 10 minutes. "
                        "Stop all advances, rotate out every brigade under 0.6 morale, hold good ground, concentrate fire and "
@@ -370,7 +479,15 @@ def make_plan(goals, state, objectives, kd_est, minutes_in_contact, own_loss=0.0
         elif tripped:
             posture += (" STOP-LOSS: the last 10 minutes cost more than " + f"{cfg['stop_loss_ratio']:.1f}x the enemy's losses: "
                         "no advances, rotate out brigades under 0.6 morale.")
+    if has_ratio_goal and (mode != "ATTACK" or abandoned) and (stop_loss or deficit or behind_far):
+        posture += (" WOODS: the casualties count and you are losing the exchange: fight only from woods, wheat or "
+                    "works; brigades in the open step back to the nearest wood's edge that keeps the enemy in range "
+                    "(the server does it), let the enemy cross the open ground, no attack out of the woods except "
+                    "on a shaken unit. Keep one brigade on an objective you must hold.")
     lines.append(f"  AMBITION: {mode}. " + posture)
     return {"mode": mode, "posture": posture, "lines": lines, "route": [atoms[k]["text"] for k in best],
             "deficit": deficit, "behind_far": behind_far, "stop_loss": stop_loss, "hold_launch": hold_launch,
-            "targets": [n[2] for n in need_cap if n[2] is not None]}
+            "targets": [n[2] for n in need_cap if n[2] is not None],
+            "overall": overall, "abandon_ratio": abandon_thr, "abandoned": abandoned, "need_cap": wanted_cap,
+            "kd_goal": has_ratio_goal, "kd": kd_est, "secure": bool(secure),
+            "hold": hold_objs, "retake": retake_objs}

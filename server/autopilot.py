@@ -12,6 +12,7 @@ import math
 from battery import is_ready
 from relief import is_resting
 from equipment import AMMO_MODES, unit_charge_range, unit_range
+from prompting import charge_zone
 from prompting import (DEAD_STATUSES, FIRING_KINDS, MELEE_KINDS, needs_rest, nearest, retreat_spot,
                        split_units, threatened_batteries, unit_status)
 
@@ -27,6 +28,30 @@ DEFAULT_ENGAGE = {
     "charge_min_morale": 0.6,
     "charge_min_stamina": 0.5,
     "charge_min_strength": 0.6,   # share of initial men
+    # WIP11 (battle of 2026-11-13 14:31): one brigade charging a beaten unit whose neighbours are steady stops in
+    # front of them and is shot to pieces (Hood). A lone auto charge needs no steady enemy this close to the target.
+    "charge_support_clear": 300,
+    # WIP12: a FRESH brigade (morale and stamina at least fresh_morale / fresh_stamina) also charges targets under
+    # fresh_target_morale, and needs no clear support around a target already under broken_target_morale (the
+    # game's AI won Thoroughfare Gap charging broken brigades with one fresh brigade).
+    "fresh_morale": 0.8,
+    "fresh_stamina": 0.8,
+    "fresh_target_morale": 0.6,
+    "broken_target_morale": 0.4,
+    # WIP13 (Crampton's Gap, 2026-11-14: 2-star brigades against 1-star ones traded fire for 2 h and never charged):
+    # two idle FRESH brigades (fresh_morale / fresh_stamina) of pair_min_stars or more, both within pair_distance
+    # of the same enemy infantry brigade, charge it together, frontal and flank when they can, whatever its morale,
+    # when their men are pair_men_ratio times its own (pair_fort_ratio in fortifications) and at most
+    # pair_max_support other steady enemy brigades stand within 300 of it. One pair a turn.
+    "charge_zone_check": True,    # WIP15: automatic charges only on the zone verdict GO (prompting.charge_zone)
+    "pair_charge": True,
+    "pair_min_stars": 2,
+    "pair_distance": 500.0,       # infantry charge range (Crampton's Gap: never two fresh veterans within 400)
+    "pair_min_morale": 0.8,
+    "pair_min_stamina": 0.7,
+    "pair_men_ratio": 1.3,
+    "pair_fort_ratio": 2.0,
+    "pair_max_support": 1,
 }
 DEFAULT_AMMO = {
     "auto": True,               # the server switches artillery to canister when infantry gets close
@@ -35,6 +60,13 @@ DEFAULT_AMMO = {
 }
 
 BUSY_CMDS = ("attack", "range_attack", "charge")
+
+
+def _supported(e, live, radius):
+    """True when a steady enemy brigade (morale 0.5+, not routing) stands within radius of enemy unit e."""
+    return any(f["id"] != e["id"] and f["kind"] in ("Infantry", "Cavalry", "Artillery") and unit_status(f) == ""
+               and float(f.get("morale", 1.0)) >= 0.5 and math.hypot(f["x"] - e["x"], f["z"] - e["z"]) <= radius
+               for f in live)
 
 
 def _share(u):
@@ -55,7 +87,45 @@ def _busy(u, last_cmds, live_ids, pending_moves, foes_by_id):
     return last.get("cmd") == "hold"   # a deliberate hold (garrison, reserve) is respected
 
 
-def engage_orders(state, orders, ranges, cfg, last_cmds=None, pending_moves=None, defending=False, stats=None):
+def pair_charge(idle, live, ranges, cfg, terrain=None, mine_all=None):
+    """WIP13: [(charger, charger, target)] for one paired charge of two fresh veteran brigades, or []."""
+    ok = [u for u in idle
+          if u["kind"] == "Infantry" and u["morale"] >= float(cfg["pair_min_morale"])
+          and u["fatigue"] >= float(cfg["pair_min_stamina"]) and _share(u) >= float(cfg["charge_min_strength"])
+          and int(u.get("stars") or 0) >= int(cfg["pair_min_stars"])
+          and not (terrain is not None and terrain.name_at(u["x"], u["z"]) == "Fortifications")]
+    best = None
+    for e in live:
+        if e["kind"] != "Infantry" or unit_status(e) != "":
+            continue
+        reach = [u for u in ok if math.hypot(e["x"] - u["x"], e["z"] - u["z"])
+                 <= min(float(cfg["pair_distance"]), unit_charge_range(u, ranges))]
+        if len(reach) < 2:
+            continue
+        support = sum(1 for f in live if f is not e and f["kind"] == "Infantry" and f["morale"] >= 0.6
+                      and math.hypot(f["x"] - e["x"], f["z"] - e["z"]) <= 300.0)
+        if support > int(cfg["pair_max_support"]):
+            continue
+        if cfg.get("charge_zone_check", True) and charge_zone(e, mine_all or idle, live)["verdict"] != "GO":
+            continue                                   # WIP15: prepare by fire first, or too few, or reserves
+        fort = terrain is not None and terrain.name_at(e["x"], e["z"]) == "Fortifications"
+        need = float(cfg["pair_fort_ratio"] if fort else cfg["pair_men_ratio"]) * float(e["hp"])
+        for i in range(len(reach)):
+            for j in range(i + 1, len(reach)):
+                a, b = reach[i], reach[j]
+                if float(a["hp"]) + float(b["hp"]) < need:
+                    continue
+                # prefer two directions (front and flank), then the weakest target
+                ang = abs(math.atan2(a["z"] - e["z"], a["x"] - e["x"]) - math.atan2(b["z"] - e["z"], b["x"] - e["x"]))
+                ang = min(ang, 2 * math.pi - ang)
+                key = (ang, -e["morale"], -float(e["hp"]))
+                if best is None or key > best[0]:
+                    best = (key, a, b, e)
+    return [best[1:]] if best else []
+
+
+def engage_orders(state, orders, ranges, cfg, last_cmds=None, pending_moves=None, defending=False, stats=None,
+                  terrain=None):
     """Orders for units the model left idle: charge a beaten enemy, advance into fire range, shoot."""
     cfg = {**DEFAULT_ENGAGE, **(cfg or {})}
     if not cfg["enabled"]:
@@ -80,6 +150,18 @@ def engage_orders(state, orders, ranges, cfg, last_cmds=None, pending_moves=None
     max_charges = max(int(cfg["max_charges"]), int(round(float(cfg.get("charges_share", 0.0)) * n_combat)))
     budget = min(max_turn, int(len(idle) * (1.0 - float(cfg["reserve_share"])) + 0.999))
     added, charges = [], 0
+    if cfg.get("pair_charge", True):
+        # not only the idle: brigades trading fire (range_attack / hold) are the very ones to send in
+        free = [u for u in mine
+                if u["kind"] == "Infantry" and u["id"] not in ordered and unit_status(u) == ""
+                and not needs_rest(u) and u["id"] not in (pending_moves or {})]
+        for a, b, e in pair_charge(free, live, ranges, cfg, terrain, mine):
+            for u in (a, b):
+                added.append({"cmd": "charge", "id": u["id"], "target": e["id"], "auto": True})
+            charges += 2
+            bump("paired charges (two fresh veteran brigades on one enemy brigade)")
+            taken = {a["id"], b["id"]}
+            idle = [u for u in idle if u["id"] not in taken]
     for u in sorted(idle, key=lambda x: (nearest(x, live) or (None, 1e9))[1]):
         if len(added) >= budget:
             break
@@ -89,8 +171,16 @@ def engage_orders(state, orders, ranges, cfg, last_cmds=None, pending_moves=None
         foe, dist = near
         fire = unit_range(u, fire_default)
         in_charge = [e for e in live if math.hypot(e["x"] - u["x"], e["z"] - u["z"]) <= unit_charge_range(u, ranges)]
+        fresh = (u["morale"] >= float(cfg["fresh_morale"]) and u["fatigue"] >= float(cfg["fresh_stamina"]))
+        target_morale = max(float(cfg["charge_target_morale"]),
+                            float(cfg["fresh_target_morale"]) if fresh else 0.0)
+        # WIP15: every automatic charge needs the zone verdict GO (men in the 600 zone at least equal, the zone
+        # worn down to morale 0.6, no fresh enemy reserve within 900); the WIP12 "broken target needs no clear
+        # support" exception is gone (Crampton's Gap 18:15: 2,500 men lost charging a 0.25 target among 6,500)
         beaten = [e for e in in_charge
-                  if e["morale"] < float(cfg["charge_target_morale"]) or _share(e) < 0.5]
+                  if (e["morale"] < target_morale or _share(e) < 0.5)
+                  and not _supported(e, live, float(cfg.get("charge_support_clear", 300)))
+                  and (not cfg.get("charge_zone_check", True) or charge_zone(e, mine, live)["verdict"] == "GO")]
         if (beaten and charges < max_charges and u["kind"] in MELEE_KINDS
                 and u["morale"] >= float(cfg["charge_min_morale"])
                 and u["fatigue"] >= float(cfg["charge_min_stamina"])

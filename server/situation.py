@@ -20,11 +20,16 @@ DEFAULT_POSTURE = {
 
 
 def strength(units):
-    """Fighting strength: men weighted by kind and by morale (a shaken unit counts for less)."""
+    """Fighting strength: men weighted by kind and by morale (a shaken unit counts for less).
+
+    0.1.4 WIP9: units still off the field (u["offmap"], reinforcements walking in) do not count. On 2026-11-12
+    14:48 eight brigades and batteries stuck at the map edge kept the force ratio between 1.0 and 1.6 for the
+    whole battle: the plan never switched to DEFEND and the withdrawal never started, while the army on the
+    field was outnumbered and losing five men for one."""
     total = 0.0
     for u in units:
         w = WEIGHT.get(u["kind"])
-        if w is None or str(u.get("status") or "") in DEAD:
+        if w is None or str(u.get("status") or "") in DEAD or u.get("offmap"):
             continue
         total += float(u["hp"]) * w * (0.5 + 0.5 * float(u.get("morale", 1.0)))
     return total
@@ -84,8 +89,28 @@ def objective_score(objectives, mine, foes, ai_side, player, cfg):
     return [text], retake
 
 
-def situation_lines(state, objectives, stale=False, cfg=None, posture_override=None):
-    """Prompt lines: force balance with a posture, then one line per objective with advice."""
+def garrison_advice(ratio, mode, needed, remote, covered):
+    """What to leave on an objective we hold and nobody threatens. A garrison is there against a raid round the
+    front (cavalry, skirmishers); it must not bleed the main effort, so it depends on the force ratio and on the
+    plan: a picket when attacking or when badly outnumbered, a brigade only for a far objective the result
+    depends on."""
+    if covered or not remote:
+        return "HOLD: the line covers it" if covered else "HOLD: a picket is enough (cavalry or skirmishers)"
+    if mode == "ATTACK":
+        return "HOLD: far from the army, a picket only (cavalry or skirmishers); the brigades go to the attack"
+    if ratio < 0.5:
+        return ("HOLD: far from the army, a picket only (cavalry or skirmishers): too weak to detach a brigade"
+                + ("; if it is raided, retake it with cavalry" if needed else ""))
+    if needed:
+        return "HOLD: far from the army and the result depends on it: one steady brigade (a battery if one is free)"
+    return "HOLD: far from the army, a picket (cavalry or skirmishers)"
+
+
+def situation_lines(state, objectives, stale=False, cfg=None, posture_override=None, plan_targets=None,
+                    capture=None, plan=None):
+    """Prompt lines: force balance with a posture, then one line per objective with advice.
+    `capture` (discipline.capture_status): who stands in or just outside the capture range of an undefended
+    objective; `plan`: the strategic plan (its mode and the objectives the result depends on)."""
     cfg = {**DEFAULT_POSTURE, **(cfg or {})}
     if not cfg["enabled"]:
         return []
@@ -110,17 +135,26 @@ def situation_lines(state, objectives, stale=False, cfg=None, posture_override=N
     if posture_override:
         posture = posture_override
     score_lines, retake = objective_score(objectives, mine, foes, ai_side, player, cfg)
+    target_names = {str(o.get("name")) for o in plan_targets or []}
+    if target_names and score_lines:
+        # the plan already names the objectives to take: no second, possibly different, "retake target"
+        score_lines = [score_lines[0].split(" RETAKE TARGET:")[0]]
     if retake and ratio <= cfg["defend_ratio"] and not posture_override:
         posture += (" BUT you are losing the objective count: defending alone cannot win. "
                     "Also retake the target below with the units you can spare.")
+    # with a strategic plan the posture is its AMBITION (written once, in STRATEGIC PLAN)
     lines = score_lines + [f"FORCE BALANCE: your strength {mine_s:.0f} vs visible enemy {foes_s:.0f} "
-             f"(ratio {_fmt_ratio(ratio)}; infantry, cavalry and half-weight skirmishers, weighted by "
-             f"morale; unseen enemy units are not counted). Posture: {posture}"]
+                           f"(ratio {_fmt_ratio(ratio)}; unseen enemy units are not counted)."
+                           + ("" if posture_override else f" Posture: {posture}")]
     if not objectives:
         return lines
     radius = float(cfg["local_radius"])
-    lines.append("OBJECTIVES (name | x,z | owner | victory points | your nearest unit | "
-                 "forces within " + f"{radius:.0f}" + " units: yours vs enemy | advice)"
+    foot = [u for u in mine if u["kind"] == "Infantry"]
+    centre = ((sum(u["x"] for u in foot) / len(foot), sum(u["z"] for u in foot) / len(foot)) if foot else None)
+    needed = {str(o.get("name")) for o in ((plan or {}).get("hold") or [])}
+    mode = (plan or {}).get("mode")
+    lines.append("OBJECTIVES (name | x,z | owner | VP | your nearest unit | strength within "
+                 + f"{radius:.0f}" + ": yours vs enemy | advice)"
                  + (" - owners are as at the start of the battle:" if stale else ":"))
     for o in objectives:
         ox, oz = o["x"], o["z"]
@@ -131,16 +165,27 @@ def situation_lines(state, objectives, stale=False, cfg=None, posture_override=N
         who = owner(o, ai_side, player)
         dists = [math.hypot(u["x"] - ox, u["z"] - oz) for u in mine if u["kind"] != "General"]
         nearest = f"{min(dists):.0f}" if dists else "-"
-        if who == "OURS":
+        if who != "OURS" and str(o.get("name")) in target_names:
+            advice = "ASSAULT TARGET (see ASSAULT PLAN)"
+        elif who == "OURS":
             if lf > 0 and lr < 1.0:
                 advice = "DEFEND: threatened, reinforce it now"
             elif lf > 0:
                 advice = "HOLD: enemy nearby, keep a garrison"
             else:
-                advice = "HOLD: keep a small garrison"
+                remote = centre is not None and math.hypot(centre[0] - ox, centre[1] - oz) > 1.5 * radius
+                covered = any(u["kind"] == "Infantry" for u in near_m)
+                advice = garrison_advice(ratio, mode, str(o.get("name")) in needed or not needed, remote, covered)
         else:
-            if lf == 0 and lm > 0:
-                advice = "TAKE: nobody is defending it, move onto it"
+            cap = (capture or {}).get(str(o.get("name")))
+            if cap and cap[0] == "in":
+                advice = (f"CAPTURING: #{cap[1]['id']} stands inside the capture range ({cap[3]:.0f}); keep it "
+                          "there until the owner changes (it takes minutes)")
+            elif cap:
+                advice = (f"TAKE: nobody defends it; a unit must stand within {cap[3]:.0f} of the point "
+                          f"(#{cap[1]['id']} is at {cap[2]:.0f}: move it ONTO the point)")
+            elif lf == 0 and lm > 0:
+                advice = "TAKE: nobody is defending it, move a unit ONTO the point (inside its capture range)"
             elif lr >= cfg["attack_ratio"]:
                 advice = "ATTACK: local superiority"
             elif lr <= cfg["defend_ratio"] and lf > 0:

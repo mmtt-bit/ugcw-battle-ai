@@ -1,8 +1,9 @@
-UGCW BATTLE AI v0.1.3-beta - BUILDING THE PLUGIN INTO THE GAME DLL (dnSpy)
+UGCW BATTLE AI v0.1.4-beta - BUILDING THE PLUGIN INTO THE GAME DLL (dnSpy)
 ===========================================================================
 You need: dnSpy (https://github.com/dnSpy/dnSpy, the 64-bit .NET build), and the Mono build of Ultimate General: Civil War
 (Unity 5.4.4). The plugin is 12 C# classes in the "UgcwAi" namespace plus ONE line added to a game method.
-It is adapted from the rome-battle-ai plugin by Cegli865. The game's own Assembly-CSharp.dll is not part of this package.
+It is adapted from the rome-battle-ai plugin by Cegli865. The game's original Assembly-CSharp.dll is not part of this package
+(a ready-built modded copy is: game-dll/Assembly-CSharp.dll; these steps are only to build it yourself).
 
 0. BACK UP FIRST. Close the game. In "<game folder>\\<game name>_Data\\Managed" copy Assembly-CSharp.dll to
    Assembly-CSharp.dll.original. Keep it: it is the only way back to the unmodified game.
@@ -15,7 +16,7 @@ It is adapted from the rome-battle-ai plugin by Cegli865. The game's own Assembl
       Bridge, Orders, AiThoughtsPanel, UnitExtras, Reflexes, MissionGoals, Commands, TerrainScan, BattleResult, Snapshot,
       Runner, Bootstrap
    For each: right-click the Assembly-CSharp module (or the "UgcwAi" namespace once it exists) > Add Class...,
-   select all the text in the editor, paste the whole content of the matching file from "plugin", click Compile.
+   select all the text in the editor, paste the whole content of the matching file from "plugin-source", click Compile.
    Fix nothing by hand: if a class does not compile, the error text tells which class before it is missing.
    Notes:
    - The files already contain "namespace UgcwAi { ... }" and their own "using" lines.
@@ -30,8 +31,56 @@ It is adapted from the rome-battle-ai plugin by Cegli865. The game's own Assembl
 4. SAVE: File > Save Module... (OK). Forgetting this step is the most common reason why nothing changes in the game.
 
 5. CHECK: start the game, load a battle, then open the game log (Unity output_log.txt / Player.log). You should see
-   "[UgcwAi] loads", "[UgcwAi] BattleResult hook installed" and, every 2 seconds, "[UgcwAi] units=... playerSide=...".
+   "[UgcwAi] loads" and "[UgcwAi] BattleResult hook installed"; with the planner server running, its window prints
+   "Game connected" and "Terrain received". (The unit list "[UgcwAi] units=... playerSide=..." was written every
+   2 seconds before 0.1.4; it is now written once, when F9 is pressed.)
    Keys in battle: F6 shows or hides the AI's reasoning panel, F8 pauses, F9 takes the AI's units away from the game's AI.
+
+UPGRADING A 0.1.3-beta DLL TO 0.1.4-beta: only four classes changed. For each, in this order, right-click the class >
+Edit Class (C#), replace the whole text with the matching file, Compile:
+      Bridge, Reflexes, Commands, Runner
+then File > Save Module. (Runner needs the new Commands: Commands.Tick, Commands.Stamp, Commands.TimedOut. If you edit
+only Runner.Update(), use plugin-source/Runner_Update_body.cs.) Use the 0.1.4 server with the 0.1.4 DLL: an older
+server never asks the new DLL to pause the game while the model thinks.
+
+UPGRADING A 0.1.4 WIP13 DLL TO WIP17 (2026-11-15, after Antietam): two classes, in this order (Commands needs the
+new UnitExtras.Fortify): right-click the class > Edit Class (C#), replace the whole text with the matching file,
+Compile:
+      UnitExtras, Commands
+then File > Save Module. The WIP17 server also works with the WIP13 DLL (no FORTIFICATIONS block, a "fortify"
+order is logged as an unknown command). Check the game log after a "fortify": "[UgcwAi] Fortify <id>: into <work>
+at x,z" or "no free work within ...".
+
+UPGRADING A 0.1.4 WIP12 DLL TO WIP13 (2026-11-14): one class:
+      TerrainScan
+right-click it > Edit Class (C#), replace the whole text with plugin-source/TerrainScan.cs, Compile once, File >
+Save Module. Check the game log: "[UgcwAi] Cover curve [cover, value]: ..." once per battle.
+
+UPGRADING A 0.1.4 WIP11 DLL TO WIP12 (2026-11-13, after Thoroughfare Gap): one class:
+      Reflexes
+right-click it > Edit Class (C#), replace the whole text with plugin-source/Reflexes.cs, Compile, File > Save
+Module. Use the WIP12 server with it (it sends unseen_refused_holds). Check the game log:
+"[UgcwAi] Reflexes configured: ... refused_holds=True". A brigade whose step forward is refused under unseen fire
+now logs "held its place (no step forward: ...)" instead of falling back.
+
+UPGRADING A 0.1.4 WIP10 DLL TO WIP11 (2026-11-13, after Kettle Run): three classes (none depends on another new
+one): right-click the class > Edit Class (C#), replace the whole text with the matching file, Compile:
+      UnitExtras, Reflexes, TerrainScan
+then File > Save Module. Use the WIP11 server with it (it sends the new reflex settings and unseen_hold_line).
+Check the game log: "[UgcwAi] Reflexes configured: ... cavalry=True" and "[UgcwAi] Altitude curves [x, value]: ...".
+
+UPGRADING A 0.1.4 WIP9 DLL TO WIP10 (2026-11-13): two classes, in this order (Commands needs the new
+UnitExtras.Detach / Recall): right-click the class > Edit Class (C#), replace the whole text with the matching file,
+Compile:
+      UnitExtras, Commands
+then File > Save Module.
+
+UPGRADING A 0.1.4 WIP8 DLL TO WIP9 (2026-11-12): three classes, in this order (UnitExtras needs the new
+Commands.HasRoute): right-click the class > Edit Class (C#), replace the whole text with the matching file, Compile:
+      Commands, UnitExtras, TerrainScan
+then File > Save Module. The WIP9 server also works with the WIP8 DLL (it then reads the field from the terrain
+scan), but the reinforcements stay stuck at the map edge and the batteries are pushed by hand until the DLL is
+rebuilt.
 
 After a game update or "Verify integrity of game files", Steam restores the original DLL: repeat step 4's file copy
 (keep your modded DLL in a safe place) or redo the steps above.

@@ -9,7 +9,7 @@ game_rules.md.
 import os
 import time
 
-ASSESSMENT_SYSTEM = """\\
+ASSESSMENT_SYSTEM = """\
 You are the field commander of an army in Ultimate General: Civil War. The battle is over and
 you now write your own after-action review for the human who built your command system.
 

@@ -91,30 +91,28 @@ def general_lines(state, cfg=None):
     gens = [u for u in mine if u["kind"] == "General"]
     if not gens:
         return []
-    lines = ["GENERALS (corps perks reach only the brigades inside the command radius; a general takes only move):"]
+    # The server keeps the generals with their brigades by itself: only the ones that need the commander's eye
+    # get a line (in danger, or with under half of their brigades inside the command radius).
+    lines = ["GENERALS needing attention (the server moves them with their brigades; corps perks reach only the "
+             "brigades inside the command radius):"]
     for g in gens:
         brigades = corps_of(g, mine)
         radius = radius_of(g, cfg)
         near = nearest(g, foes)
-        txt = f"  {g['name']} (#{g['id']}) at {g['x']:.0f},{g['z']:.0f}"
-        if g.get("corps") is not None:
-            txt += f", corps {g['corps']}"
-        if radius > 0:
-            txt += f", command radius {radius:.0f}"
+        txt = f"  #{g['id']} {g['name']}"
+        worth = False
         if brigades and radius > 0:
             inside = sum(1 for u in brigades if _d(u, g) <= radius)
             cx = sum(u["x"] for u in brigades) / len(brigades)
             cz = sum(u["z"] for u in brigades) / len(brigades)
-            txt += f": {inside} of {len(brigades)} brigades inside; their centre at {cx:.0f},{cz:.0f}"
-            out = [u for u in brigades if _d(u, g) > radius]
-            if out:
-                txt += " (outside: " + ", ".join(f"#{u['id']}" for u in out[:6]) + ")"
-        elif not brigades:
-            txt += " (corps of his brigades unknown)"
-        if near:
-            txt += f"; nearest enemy {near[1]:.0f}" + (" - TOO CLOSE" if near[1] < float(cfg["safe_distance"]) else "")
-        lines.append(txt)
-    return lines
+            txt += f": {inside} of {len(brigades)} brigades inside his radius ({radius:.0f}); their centre at {cx:.0f},{cz:.0f}"
+            worth = inside * 2 < len(brigades)
+        if near and near[1] < float(cfg["safe_distance"]):
+            txt += f"; enemy at {near[1]:.0f} - TOO CLOSE"
+            worth = True
+        if worth:
+            lines.append(txt)
+    return lines if len(lines) > 1 else []
 
 
 def sanitize_generals(raw_orders, state, terrain=None, cfg=None, stats=None):
@@ -182,7 +180,10 @@ def general_orders(state, orders, cfg, last_cmds, pending_moves, terrain=None, s
             continue
         x, z = _station(g, brigades, foes, radius, cfg, terrain)
         pend = (pending_moves or {}).get(g["id"])
-        if pend and math.hypot(pend[0] - x, pend[1] - z) < float(cfg["min_move"]):
+        # a general already riding to his station is left alone unless it moved a lot (his brigades march too:
+        # a new order at every state would be a new path at every state)
+        if pend and math.hypot(pend[0] - x, pend[1] - z) < (float(cfg["min_move"]) if danger
+                                                             else max(float(cfg["min_move"]), 0.6 * radius)):
             continue
         if math.hypot(g["x"] - x, g["z"] - z) < float(cfg["min_move"]) and not danger:
             continue

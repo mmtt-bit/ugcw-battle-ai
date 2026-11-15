@@ -111,26 +111,22 @@ def cavalry_lines(state, cfg=None):
     ids = set(scouts(state, cfg))
     enemy_cav = [e for e in foes if e["kind"] == "Cavalry"]
     skirm = [e for e in foes if e["kind"] == "Skirmish"]
-    lines = ["CAVALRY:"]
+    lines = ["CAVALRY (roles: see CAVALRY in the rules):"]
     for c in cav:
         perks = scout_perks(c, cfg)
         bits = []
         if c["id"] in ids:
-            bits.append("SCOUT NOW: ride along a flank towards the enemy side to reveal where its forces stand, stay "
-                        f"{cfg['recon_keep_away']:.0f}+ from enemy infantry, then come back to the reserve"
-                        + (f" (perks: {', '.join(perks)})" if perks else ""))
+            bits.append(f"SCOUT NOW along a flank (stay {cfg['recon_keep_away']:.0f}+ from enemy infantry)")
         else:
             ec = min(enemy_cav, key=lambda e: _d(c, e), default=None)
             sk = min(skirm, key=lambda e: _d(c, e), default=None)
             if ec is not None and _d(c, ec) < 900:
-                bits.append(f"enemy cavalry {ec['name']} (#{ec['id']}) at {_d(c, ec):.0f}: stay in reserve behind the "
-                            "infantry and meet it when it charges; charge it only when it is shaken or already engaged")
+                bits.append(f"enemy cavalry #{ec['id']} at {_d(c, ec):.0f}: reserve, meet its charge")
             elif sk is not None:
-                bits.append(f"enemy skirmishers {sk['name']} (#{sk['id']}) at {_d(c, sk):.0f}: a flank task, send it round "
-                            "the flank to ride them down (charge them when they stand apart from enemy infantry)")
+                bits.append(f"flank task: skirmishers #{sk['id']} at {_d(c, sk):.0f}")
             else:
-                bits.append("reserve: wait behind the line, centred on the part of the front most likely to be charged")
-        lines.append(f"- {c['name']} (#{c['id']}): " + "; ".join(bits))
+                bits.append("reserve")
+        lines.append(f"- #{c['id']} {c['name']}: " + "; ".join(bits))
     return lines + ride_down_lines(state, cfg)
 
 

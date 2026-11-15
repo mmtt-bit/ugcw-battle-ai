@@ -11,7 +11,8 @@ result of each battle with the best information the report holds, in this order:
   3. the human player's conditions of config.json (mission > player_rule), applied to the objectives
      and casualties of the report;
   4. otherwise the report is left as it was and marked "kept".
-Battles with almost no fighting stay "no_contest".
+Battles with almost no fighting stay "no_contest". Dry runs (reports with "dry_run": true: the game's own AI
+fought, the model's orders were only logged) are not counted for any model: they go to "dry_runs".
 
 Run it from the planner folder:
     python rescore.py            # shows what would change (nothing is written)
@@ -57,11 +58,30 @@ def main():
     rule = cfg.get("mission", {}).get("player_rule")
     points = {**POINTS, **cfg.get("scoring", {})}
     min_cas = float(cfg.get("scoring", {}).get("min_casualties", 25))
-    history, changed = [], 0
+    history, changed, dry_runs = [], 0, []
+    phase_men = {}     # WIP17: losses of the phases merged into a chained battle (fix_scoreboard.py)
     for path in sorted(glob.glob(os.path.join("reports", "report-*.json"))):
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 r = json.load(fh)
+            if r.get("merged_into"):
+                m = phase_men.setdefault(r["merged_into"], [0, 0, 0])
+                m[0] += r.get("own_men_lost", 0)
+                m[1] += r.get("enemy_men_lost_seen", 0)
+                m[2] += 1
+                print(f"{os.path.basename(path)}  phase of the battle ended {r['merged_into']}: merged into it")
+                continue
+            if (r.get("outcome") == "no_contest" and (r.get("duration_s") or 0) < 60
+                    and not r.get("own_men_lost") and not r.get("enemy_men_lost_seen")):
+                print(f"{os.path.basename(path)}  map open under a minute, no losses: not a battle, left out")
+                continue
+            if r.get("dry_run"):
+                dry_runs.append({"ended": r["ended"], "outcome": r.get("outcome"), "points": r.get("points", 0),
+                                 "commander": "game AI (dry run)", "model_logged": r.get("backend"),
+                                 "kd_men": r.get("kd_men"), "own_men_lost": r.get("own_men_lost", 0),
+                                 "enemy_men_lost_seen": r.get("enemy_men_lost_seen", 0)})
+                print(f"{os.path.basename(path)}  dry run (the game's AI fought): kept apart in dry_runs")
+                continue
             new, source = decide(r, rule, min_cas)
         except (OSError, ValueError, KeyError, TypeError) as e:
             print(f"{os.path.basename(path)}: skipped ({e})")
@@ -74,6 +94,13 @@ def main():
         history.append({"ended": r["ended"], "outcome": new, "points": pts, "model": r.get("backend"),
                         "kd_men": r["kd_men"], "own_men_lost": r["own_men_lost"],
                         "enemy_men_lost_seen": r["enemy_men_lost_seen"]})
+    for h in history:
+        m = phase_men.get(h["ended"])
+        if m:
+            h["own_men_lost"] += m[0]
+            h["enemy_men_lost_seen"] += m[1]
+            h["kd_men"] = round(h["enemy_men_lost_seen"] / max(h["own_men_lost"], 1), 2)
+            h["phases"] = m[2] + 1
     if not history:
         print("No report found in reports/.")
         return
@@ -92,6 +119,8 @@ def main():
                 m[k] += 1
     sb["by_model"] = by_model
     sb["history"] = history[-30:]
+    if dry_runs:
+        sb["dry_runs"] = dry_runs[-30:]
     print(f"{changed} battle(s) changed. New total: {sb['points']} point(s) in {sb['battles']} battle(s) "
           f"({sb['victories']} won, {sb['draws']} drawn, {sb['defeats']} lost, {sb['no_contest']} no contest)")
     if not args.apply:

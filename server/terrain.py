@@ -53,6 +53,11 @@ class TerrainMap:
         col, row = self._cell(x, z)
         return int(self.heights[row][col])
 
+    def has(self, name):
+        """True when at least one cell of the grid is of this terrain type."""
+        sym = self.symbol_of.get(name)
+        return sym is not None and any(sym in row for row in self.grid)
+
     def clamp(self, x, z):
         half = self.step / 2.0
         return (min(max(x, self.min_x + half), self.max_x - half),
@@ -186,6 +191,30 @@ class TerrainMap:
         elif cross:
             text += f"; ford/bridge {cross:.0f}"
         return f"{dist:.0f} away: {text}; height {self.height_at(x1, z1)}->{self.height_at(x2, z2)}"
+
+    def route_brief(self, x1, z1, x2, z2, kind="Infantry", slow_share=0.25):
+        """What matters on the straight way to a point, in a few words, or '' when the way is open:
+        'way 57% slow (DenseForest)' when a quarter or more is slow ground, 'way: WATER, no ford' for water
+        without a crossing on the line."""
+        dist = math.hypot(x2 - x1, z2 - z1)
+        if dist < 1:
+            return ""
+        n = max(2, int(dist // (self.step / 2.0)))
+        lengths = {}
+        for i in range(n):
+            t = (i + 0.5) / n
+            name = self.name_at(x1 + (x2 - x1) * t, z1 + (z2 - z1) * t)
+            lengths[name] = lengths.get(name, 0.0) + 1.0 / n
+        water = sum(v for k, v in lengths.items() if k in WATER)
+        cross = sum(v for k, v in lengths.items() if k in CROSSINGS)
+        if water > 0 and not cross:
+            return "way: WATER, no ford"
+        slow = {k: v for k, v in lengths.items() if self.speed_of(k, kind) < 0.75 and k not in WATER}
+        share = sum(slow.values())
+        if share >= slow_share:
+            worst = max(slow.items(), key=lambda kv: kv[1])[0]
+            return f"way {share:.0%} slow ({worst})"
+        return ""
 
     # ---- movement cost (from the game's own terrain tooltips) ----------------------
     DEFAULT_SPEED = {"Grass": 1.0, "Road": 1.0, "Wheatfield": 0.9, "Scrub": 0.45, "Mud": 0.33, "Forest": 0.66,
@@ -328,7 +357,10 @@ class TerrainMap:
         lines = []
         lines.append(f"Playable area: x from {self.min_x:.0f} to {self.max_x:.0f}, "
                      f"z from {self.min_z:.0f} to {self.max_z:.0f}.")
-        lines.append("Legend: " + ", ".join(f"{s} = {n}" for s, n in self.legend.items()))
+        # (a map without road cells: no "Road" in the legend nor in the effects; its tooltip is the one of grass)
+        no_road = not self.has("Road")
+        lines.append("Legend: " + ", ".join(f"{s} = {n}" for s, n in self.legend.items()
+                                            if not (no_road and n == "Road")))
         text, cell = self.overview(overview_cols)
         lines.append(f"TERRAIN MAP (one character = about {cell:.0f} x {cell:.0f} units; "
                      "each row is labelled with its z coordinate, the largest z is at the top; "
@@ -356,11 +388,15 @@ class TerrainMap:
             lines.append("TERRAIN EFFECTS, as described by the game itself:")
             base = self.rules.get("Infantry", {})
             for terrain, hint in base.items():
+                if no_road and terrain == "Road":
+                    continue
                 lines.append(f"- {terrain}: {hint}")
             for kind, table in self.rules.items():
                 if kind == "Infantry":
                     continue
                 for terrain, hint in table.items():
+                    if no_road and terrain == "Road":
+                        continue
                     if hint != base.get(terrain):
                         lines.append(f"- {kind} on {terrain}: {hint}")
         return "\n".join(lines)

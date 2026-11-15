@@ -71,6 +71,7 @@ namespace UgcwAi
 					Bridge.Connected = true;
 					StringBuilder stringBuilder = new StringBuilder();
 					byte[] array = new byte[4096];
+					int num3 = 0;
 					while (Bridge.running)
 					{
 						string text = null;
@@ -112,6 +113,16 @@ namespace UgcwAi
 						}
 						else
 						{
+							// A closed server is seen at once (before 0.1.4 only a failed write showed it, and the
+							// game could stay paused until the time-out): readable socket with nothing to read.
+							if (++num3 >= 50)
+							{
+								num3 = 0;
+								if (tcpClient.Client.Poll(0, SelectMode.SelectRead) && tcpClient.Client.Available == 0)
+								{
+									break;
+								}
+							}
 							Thread.Sleep(10);
 						}
 					}
