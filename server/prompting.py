@@ -1,8 +1,10 @@
 """Prompt construction, answer parsing and order validation for the AI commander."""
 import json
+import re
 import math
 
-from equipment import AMMO_MODES, equipment_dynamic, equipment_enemy, equipment_text, unit_charge_range, unit_range, unit_width
+from equipment import (AMMO_MODES, enemy_bore, equipment_brief, equipment_dynamic, equipment_enemy, equipment_text,
+                       unit_charge_range, unit_range, unit_width)
 from battery import DEFAULT_BATTERY, battery_lines, is_ready
 from cavalry import DEFAULT_CAVALRY, cavalry_lines, exposed_move, scouts
 from supply import sanitize_supply, supply_lines
@@ -97,6 +99,15 @@ ORDERS_SCHEMA = {
                 "required": ["objective"],
             },
         },
+        "assault_column": {
+            "type": "object",
+            "properties": {
+                "objective": {"type": "string"},
+                "from": {"type": "array"},
+                "go": {"type": "boolean"},
+                "cancel": {"type": "boolean"},
+            },
+        },
         "orders": {
             "type": "array",
             "items": {
@@ -104,7 +115,8 @@ ORDERS_SCHEMA = {
                 "properties": {
                     "cmd": {"type": "string", "enum": [
                         "move", "attack", "charge", "range_attack",
-                        "hold", "fallback", "formation", "gait", "ammo", "supply", "limber", "mount"]},
+                        "hold", "fallback", "formation", "gait", "ammo", "supply", "limber", "mount",
+                        "detach", "recall", "fortify"]},
                     "id": {"type": "integer"},
                     "x": {"type": "number"},
                     "z": {"type": "number"},
@@ -134,7 +146,7 @@ COORDINATES AND UNITS
 - Unit kinds: Infantry, Cavalry, Artillery, Skirmish (detached skirmishers), General, Supply.
 - "men" is the current number of soldiers. Morale and stamina range from 0 (bad) to 1 (good).
 - Ranges: infantry and cavalry open fire from about __FIRE__ units and can charge from about
-  __CHARGE__ units; each unit's own figures (EQUIP column, YOUR BRIGADES roster) replace these.
+  __CHARGE__ units; each unit's own figures (unit notes, YOUR BRIGADES roster) replace these.
   The unit table flags every unit with an enemy in fire range or in charge range.
 - Units you never ordered stay under the game's built-in AI.
 
@@ -146,14 +158,19 @@ ORDERS ("id" is one of your unit ids, "target" is a visible enemy unit id)
 - {"cmd": "range_attack", "id": 9, "target": 42}  ranged attack on the target
 - {"cmd": "hold", "id": 9}                        stand and hold the current position
 - {"cmd": "fallback", "id": 9, "duration": 20}    pull back for N seconds (5 to 60); a battery stays unlimbered
-- {"cmd": "formation", "id": 9, "value": "Line"}  "Line" or "RoadColumn"
+__FORMATION__
 - {"cmd": "gait", "id": 9, "value": "Walk"}       "Run" or "Walk"
 - {"cmd": "supply", "id": 12, "artillery": true, "infantry": true}   SUPPLY WAGON only: kinds it rearms
 - {"cmd": "limber", "id": 9, "value": "unpack"}   ARTILLERY only: "unpack" (ready to fire) or "pack"
 - {"cmd": "ammo", "id": 9, "value": "canister"}   ARTILLERY only: "auto", "mixed" or "canister"
 - {"cmd": "mount", "id": 9, "value": "dismount"}  CAVALRY only: "dismount" (fight on foot) or "mount"
+- {"cmd": "detach", "id": 9}                      INFANTRY flagged "can detach skirmishers": detach its skirmish screen
+- {"cmd": "recall", "id": 31}                     SKIRMISH screen only: walk back into its brigade
+- {"cmd": "fortify", "id": 9, "x": 3900, "z": 300}  INFANTRY: march into the free field work at x,z (see
+  FORTIFICATIONS) and occupy it; without x/z, the nearest free work within 400 m
 - {"cmd": "move", "id": 16, "x": 3900, "z": 300}  also for a GENERAL: his only order (see GENERALS)
-  "limber", "ammo" and "mount" do not cancel the unit's other order: they can go with it in the same turn.
+  "limber", "ammo", "mount", "detach" and "recall" do not cancel the unit's other order: they can go with it in
+  the same turn.
 
 ANSWER FORMAT
 Reply with ONE JSON object and nothing else (no markdown, no code fences):
@@ -169,8 +186,8 @@ Reply with ONE JSON object and nothing else (no markdown, no code fences):
   map point on the side the assault comes from (omit = the best approach found by the server); launch: "now" goes
   in at once, "wait" holds it in the staging area (the server still forces it when the timer runs low), "auto"
   leaves the timing to the server's rules, "release" disbands the group. Two assaults may not share brigades.
-  The server keeps your last "assaults" and applies it every turn: send it again only to change it; [] goes back
-  to the server's own choice.
+  The server keeps your last "assaults" and applies it every turn: send it again only to change it (omit it or
+  send [] to keep it); launch "release" hands that assault back to the server.
 - Two assaults in "assaults" go in TOGETHER (the server waits until both are ready): on one objective from two
   sides (a pincer), or on two objectives so that the player must split his attention.
 - FINAL CHARGE: with 20 minutes or less on the timer and the objective still the enemy's, the server sends every
@@ -195,19 +212,33 @@ READING THE STATE (what the blocks of each turn mean)
 - FRONT LINE "in contact": do not re-form the line; stand and fire (hold, attack, range_attack), charge shaken
   enemies in charge range, move only units out of fire range or whose fire is blocked (FIRE LANES).
 - FIRE LANES: units whose straight line of fire is blocked by a friendly unit, with a sidestep spot.
-- CHARGE OPPORTUNITIES: your infantry or cavalry with an enemy in charge range; the weakest enemy in reach.
+- CHARGE OPPORTUNITIES: your infantry or cavalry with a WEAK enemy in charge range (morale under 0.7, falling
+  back, or guns / skirmishers / wagons). Steady infantry in reach is not listed. FRESH = your unit has morale and
+  stamina 0.8+. Each line counts the zone of 600 around the target (your men vs the enemy's, the enemy morale
+  there, fresh enemy reserves) and gives a verdict: GO, PREPARE (fire and guns first), TOO FEW, RECONSIDER
+  (fresh enemy reserve near). See CHARGE SPARINGLY.
 - RIDE-DOWN OPPORTUNITIES: fresh cavalry and enemy skirmishers or dismounted troops apart from steady infantry.
-- CAVALRY: keep it behind the front line; it is not for frontal attacks on steady infantry.
-- BATTERIES: ready = unlimbered and able to fire; packed = limbered, cannot fire until unlimbered (limber order,
-  value unpack; the server unpacks a battery that is not marching); a MOVE packs a
-  battery, a FALLBACK steps it back and keeps it unlimbered.
-- Cavalry EQUIP "mounted" / "DISMOUNTED" (or "dismounting", "mounting"): the cavalry's mode, like a battery's;
-  "cannot dismount" = shock cavalry or in a fortification.
-- Unit table: positions are rounded to 10; "men" is one number when the unit is at full strength, "now/max"
-  otherwise. In EQUIP, nothing written = full ammunition, ammo mode auto, cavalry mounted. Your units' fixed
-  equipment is in YOUR BRIGADES (system prompt); enemy EQUIP gives the bore, stars and perks.
-- Facing (unit table): nothing written = the unit faces its nearest enemy; "facing obliquely", "SIDE TO ENEMY" or
-  "BACK TO ENEMY" otherwise. Units far from every enemy (not batteries) get a short line.
+- CAVALRY: one line per regiment with its role now: "reserve" (behind the line), "reserve, meet its charge" (enemy
+  cavalry near), "flank task" (skirmishers to ride down round a flank), "SCOUT NOW". Not for frontal attacks.
+- BATTERIES: how many are in range and firing, then only the ones that need a decision. PACKED = limbered, cannot
+  fire until unlimbered (limber order, value unpack; the server unpacks a battery that is not marching); a MOVE
+  packs a battery, a FALLBACK steps it back and keeps it unlimbered.
+- YOUR UNITS table: positions are rounded to 10; "men" is one number at full strength, "now/max" otherwise;
+  ground/height = the terrain under the unit and its relief level 0-9 ("-" for units far from every enemy and for
+  generals); nearest enemy = "#id at distance" with [in fire range] or [IN CHARGE RANGE]. Wagons are listed only
+  under SUPPLY WAGONS. The notes give only what is not the normal case:
+  "r442" = the unit's fire range now; "ammo 56%" only under 75 %; PACKED / unlimbering / packing up = a battery
+  that cannot fire (nothing = ready); canister / mixed = ammunition mode (nothing = auto); DISMOUNTED = cavalry on
+  foot (nothing = mounted); STATUS MELEE / FALLBACK / ROUTING; MARCHING to x,z; the facing (nothing = it faces its
+  nearest enemy; "facing obliquely", "SIDE TO ENEMY", "BACK TO ENEMY"); "way 57% slow (DenseForest)" or "way:
+  WATER, no ford" = the straight way to its nearest enemy (nothing = open ground). A unit that is not in YOUR
+  BRIGADES (a late arrival) shows its full equipment there.
+- VISIBLE ENEMY UNITS: nearest first. Notes: "rifled", "breech" (breech-loader, fires faster), "repeater 7" (7
+  shots before reloading, about twice the fire: no frontal charge), "revolver 6" (cavalry sidearm, short range),
+  "flintlock" (slower), "double", "carbine" (nothing = smoothbore), "r442" = fire range, "ammo" only under 40 %, PACKED, DISMOUNTED, "2*" = veterancy stars. Distant
+  units have position, men and morale only. ENEMY PERKS lists each perk once with the ids of the units that have
+  it. Captured and shattered units are not listed.
+- ORDERS RUNNING: the orders in force, by unit id; "*" = given by the server (your staff), the others are yours.
 - MARCHING (unit table): the unit has not finished its last move; do not re-order it unless the situation changed
   (a new order restarts its path). At most 8 moves are accepted per turn; short sidesteps that clear a blocked line
   of fire (FIRE LANES) do not count and are always allowed.
@@ -222,12 +253,14 @@ READING THE STATE (what the blocks of each turn mean)
 - UNSEEN FIRE: your units losing men while no visible enemy stands within their own fire range (hidden, camouflaged
   or out-ranging shooters), the nearest visible enemy, the nearest woods or wheat that can hide them, and your
   doctrine.
-- GENERALS: each general, his corps, his command radius (how far his corps bonuses reach) and how many of his
-  brigades stand inside it.
+- GENERALS needing attention: only generals in danger or with under half of their brigades inside their
+  command radius (how far their corps bonuses reach); the server moves the generals with their brigades.
 - SUPPLY WAGONS and UNITS LOW ON AMMUNITION: a wagon rearms, by itself, the friendly units of the kinds it is
   switched on for that stand inside its area. To rearm, follow AMMUNITION AND SUPPLY WAGONS in the rules.
-- YOUR BRIGADES (below): the fixed equipment of your units for this battle. The per-turn EQUIP column then only
-  shows what changes (range, ammunition, battery state, width); a unit not in the roster shows its full equipment.
+- MISSION BRIEFING and OBJECTIVES OF THIS MAP (below, fixed for the battle): the game's own texts.
+- YOUR BRIGADES (below): the fixed equipment of your units for this battle (weapon, perks, width...).
+- You are called when a decision is worth it (several battle minutes apart, at once for an objective changing
+  hands or a broken brigade); between your turns the server keeps executing your last orders and "assaults".
 
 __TERRAIN_SECTION__GAME RULES (these win over the strategy notes)
 __RULES__
@@ -239,34 +272,44 @@ __ROSTER__"""
 TERRAIN_GUIDE = """\
 TERRAIN (fixed for this battle)
 How to use it:
-- Roads (=) are meant for fast marching. RoadColumn is the formation intended for road travel;
-  switch back to Line before combat.
-- Forests (f, F) and fortifications (#) usually give cover. The exact effects reported by the
+__ROADS__- Forests (f, F) and fortifications (#) usually give cover. The exact effects reported by the
   game are listed under TERRAIN EFFECTS: rely on them rather than on guesses.
 - Crossing water (~) is usually costly: prefer fords (:) and bridges (B). Water marked X cannot
   be entered: a move that ends there is shifted to the nearest passable spot.
 - Higher ground usually helps visibility and defence.
-- In the unit tables, every unit shows the terrain it stands on and its relief level (0-9), and
-  your units also show the terrain along the straight line to their nearest visible enemy. The
-  game finds the real path by itself, so use the line only as a hint.
+- In the unit tables, units near the fight show the terrain they stand on and its relief level
+  (0-9), and your units flag slow ground or water on the straight line to their nearest visible
+  enemy. The game finds the real path by itself, so use that only as a hint.
 
 """
 
 
+# Written only for a map that has road cells (none in the battles recorded so far: the game's roads are drawn on
+# grass, and the tooltip of "Road" is the one of "Grass").
+ROADS_GUIDE = "- Roads (=): their speed is under TERRAIN EFFECTS; the server's routes follow them when they help.\n"
+FORMATION_ORDER = ('- {"cmd": "formation", "id": 9, "value": "Line"}  "Line" or "RoadColumn" (column for long '
+                   "marches; back to Line before combat)")
+
+
 def build_system_prompt(side_name, max_orders, strategy_text, terrain_text="", ranges=None,
-                        rules_text="", roster_text=""):
+                        rules_text="", roster_text="", briefing_text="", has_roads=False, formation_note=None):
+    """`has_roads`: the map has road cells. `formation_note`: the line of the ORDERS list about formations
+    (march.march_note: who sets them, the model or the server)."""
     ranges = {**DEFAULT_RANGES, **(ranges or {})}
     strategy = strategy_text.strip() or "(none)"
-    section = (TERRAIN_GUIDE + terrain_text.strip() + "\n\n") if terrain_text.strip() else ""
+    guide = TERRAIN_GUIDE.replace("__ROADS__", ROADS_GUIDE if has_roads else "")
+    section = (guide + terrain_text.strip() + "\n\n") if terrain_text.strip() else ""
     return (SYSTEM_PROMPT.replace("__TERRAIN_SECTION__", section)
+            .replace("__FORMATION__", formation_note or FORMATION_ORDER)
             .replace("__SIDE__", side_name)
             .replace("__FIRE__", f"{float(ranges['fire']):.0f}")
             .replace("__CHARGE__", f"{float(ranges['charge']):.0f}")
             .replace("__RULES__", rules_text.strip() or "(none)")
             .replace("__MAX_ORDERS__", str(max_orders))
             .replace("__STRATEGY__", strategy)
-            .replace("__ROSTER__", ("\nYOUR BRIGADES (fixed equipment for this battle)\n" + roster_text.strip() + "\n")
-                     if roster_text.strip() else ""))
+            .replace("__ROSTER__", (("\n" + briefing_text.strip() + "\n") if briefing_text.strip() else "")
+                     + (("\nYOUR BRIGADES (fixed equipment for this battle)\n" + roster_text.strip() + "\n")
+                        if roster_text.strip() else "")))
 
 
 def format_clock(seconds):
@@ -314,8 +357,55 @@ def range_flag(unit, distance, ranges):
     return ""
 
 
+CHARGE_WORTH_MORALE = 0.7   # a charge on a steadier brigade is not an "opportunity" (the server runs assaults)
+FRESH_MORALE = 0.8          # WIP12: a charger this fresh (morale and stamina) is marked FRESH in the list
+FRESH_STAMINA = 0.8
+
+
+# WIP15 (Crampton's Gap, 2026-11-14 18:15, model alone): 6th Va and 61st Va (2,079 men) charged Hayes (morale 0.25)
+# among 6,500 steady men within 300 and lost 2,500 men in 4 minutes. A charge is judged on the zone around the
+# target: men on each side within CHARGE_ZONE, the enemy morale there, and fresh enemy brigades in reserve nearby.
+CHARGE_ZONE = 600.0          # the zone counted around the target
+CHARGE_ZONE_MORALE = 0.6     # enemy zone morale (men-weighted) under this: worn down, the charge can go in
+CHARGE_ZONE_RATIO = 1.0      # your men in the zone at least this share of the enemy's...
+BROKEN_ZONE_MORALE = 0.4     # ...or BROKEN_ZONE_RATIO of them once the zone morale is under this: the game's own
+BROKEN_ZONE_RATIO = 0.75     # AI won Thoroughfare Gap with zone morale 0.30 and 0.86 of the zone men (median)
+RESERVE_FRESH_MORALE = 0.8   # an enemy brigade this steady...
+RESERVE_DISTANCE = 900.0     # ...beyond the zone but within this of the target...
+RESERVE_ENGAGED = 400.0      # ...and no unit of yours within this of it is a fresh reserve
+
+
+def charge_zone(target, mine, foes):
+    """{"own", "enemy", "morale", "reserves", "verdict"} for a charge on target. Verdict: GO, PREPARE (wear the
+    zone down by fire first), TOO FEW (fewer men than the enemy in the zone), RECONSIDER (fresh enemy reserve)."""
+    live_foes = [e for e in foes if unit_status(e) not in DEAD_STATUSES and e["kind"] in ("Infantry", "Cavalry")]
+    live_mine = [u for u in mine if unit_status(u) not in DEAD_STATUSES and u["kind"] in ("Infantry", "Cavalry")]
+    def d(a, b):
+        return math.hypot(a["x"] - b["x"], a["z"] - b["z"])
+    zone_e = [e for e in live_foes if d(e, target) <= CHARGE_ZONE]
+    if target["kind"] in ("Infantry", "Cavalry") and target not in zone_e:
+        zone_e.append(target)
+    own = sum(float(u["hp"]) for u in live_mine if d(u, target) <= CHARGE_ZONE and u["morale"] >= NO_CHARGE_MORALE)
+    enemy = sum(float(e["hp"]) for e in zone_e)
+    morale = (sum(float(e["hp"]) * e["morale"] for e in zone_e) / enemy) if enemy > 0 else 0.0
+    reserves = [e for e in live_foes if e is not target and e["morale"] >= RESERVE_FRESH_MORALE
+                and CHARGE_ZONE < d(e, target) <= RESERVE_DISTANCE   # those in the zone are already counted
+                and all(d(e, u) > RESERVE_ENGAGED for u in mine if unit_status(u) not in DEAD_STATUSES)]
+    need = BROKEN_ZONE_RATIO if (enemy > 0 and morale < BROKEN_ZONE_MORALE) else CHARGE_ZONE_RATIO
+    if own < need * enemy:
+        verdict = "TOO FEW"
+    elif reserves:
+        verdict = "RECONSIDER"
+    elif enemy > 0 and morale >= CHARGE_ZONE_MORALE:
+        verdict = "PREPARE"
+    else:
+        verdict = "GO"
+    return {"own": own, "enemy": enemy, "morale": morale, "reserves": reserves, "verdict": verdict}
+
+
 def charge_opportunities(mine, foes, ranges, limit=12):
-    """Own infantry/cavalry with enemies in charge range, with the weakest enemy in reach."""
+    """Own infantry/cavalry with a weak enemy in charge range (shaken, falling back, or guns / skirmishers /
+    wagons): the weakest one in reach. Steady infantry in reach is not listed: every brigade in contact has one."""
     lines = []
     for u in mine:
         if (u["kind"] not in MELEE_KINDS or unit_status(u) in DEAD_STATUSES
@@ -326,11 +416,18 @@ def charge_opportunities(mine, foes, ranges, limit=12):
         if not reach:
             continue
         weakest = min(reach, key=lambda e: (e["morale"], e["hp"] / max(e["maxHp"], 1.0)))
+        if (weakest["morale"] >= CHARGE_WORTH_MORALE and unit_status(weakest) != "fallback"
+                and weakest["kind"] in ("Infantry", "Cavalry")):
+            continue
         dist = math.hypot(weakest["x"] - u["x"], weakest["z"] - u["z"])
-        lines.append(f"- {u['id']} {u['name']} ({u['hp']:.0f} men, morale {u['morale']:.2f}, "
-                     f"stamina {u['fatigue']:.2f}) -> enemy {weakest['id']} {weakest['name']} "
-                     f"({weakest['kind']}, {weakest['hp']:.0f}/{weakest['maxHp']:.0f} men, "
-                     f"morale {weakest['morale']:.2f}, {dist:.0f} away)")
+        fresh = u["morale"] >= FRESH_MORALE and float(u.get("fatigue", 0)) >= FRESH_STAMINA
+        z = charge_zone(weakest, mine, foes)
+        res = (f", {len(z['reserves'])} fresh enemy brigade(s) in reserve within {RESERVE_DISTANCE:.0f}"
+               if z["reserves"] else "")
+        lines.append(f"- #{u['id']} {u['name']}{' FRESH' if fresh else ''} -> #{weakest['id']} {weakest['name']} "
+                     f"({weakest['kind']}, {weakest['hp']:.0f} men, morale {weakest['morale']:.2f}) at {dist:.0f}"
+                     f" | zone {CHARGE_ZONE:.0f}: yours {z['own']:.0f} vs {z['enemy']:.0f} men, enemy morale "
+                     f"{z['morale']:.2f}{res}: {z['verdict']}")
     return lines[:limit]
 
 
@@ -641,8 +738,9 @@ def threatened_batteries(mine, foes):
         if near is None:
             continue
         e, d = near
+        # (a guard standing right beside a wide battery covers it too: brigades and batteries are 150-250 wide)
         covered = any(
-            math.hypot(g["x"] - b["x"], g["z"] - b["z"]) <= COVER_RADIUS
+            math.hypot(g["x"] - b["x"], g["z"] - b["z"]) <= max(COVER_RADIUS, 0.5 * (unit_width(g) + unit_width(b)) + 60.0)
             and math.hypot(g["x"] - e["x"], g["z"] - e["z"]) < d
             for g in guards)
         if not covered:
@@ -675,96 +773,130 @@ def artillery_risk_lines(mine, foes, terrain=None):
 
 
 def compact_order(o):
-    """Short form of an order for YOUR ORDERS LAST TURN in large battles (ids only)."""
+    """Short form of an order for ORDERS RUNNING (ids only)."""
     txt = f"#{o['id']} {o['cmd']}"
     if o.get("target") is not None:
         txt += f" #{o['target']}"
     elif o.get("x") is not None:
-        txt += f" {o['x']:.0f},{o['z']:.0f}"
+        txt += f" {round(float(o['x']), -1):.0f},{round(float(o['z']), -1):.0f}"
     elif o.get("value") is not None:
         txt += f" {o['value']}"
-    return txt + (" (auto)" if o.get("auto") else "")
+    return txt + ("*" if o.get("auto") else "")
 
 
 def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None, line_cfg=None, extra_lines=None, line_memory=None, plan_mode=None, roster=None, scale=None, marching=None):
-    """`scale` (large battles only, see config.json "scale") shortens the lines of the units that are far from the
-    fight and caps the long lists; None gives the full detail for every unit (short battles)."""
+    """The state of one turn. Written for few tokens: the prompt of a turn is never read from the cache, so every
+    character is paid at every call. Normal cases are not written (see READING THE STATE in the system prompt).
+    `scale` (config.json "scale") gives the radii inside which a unit gets its full line."""
     ranges = {**DEFAULT_RANGES, **(ranges or {})}
-    mine, foes = split_units(state)
+    mine_all, foes_all = split_units(state)
+    # units out of the battle (captured, shattered) are not listed; a captured unit changes side in the game and
+    # would otherwise show up as an enemy brigade
+    gone = ("captured", "shattered")
+    mine = [u for u in mine_all if unit_status(u) not in gone]
+    foes = [u for u in foes_all if unit_status(u) not in gone]
+    foes_live = [e for e in foes if unit_status(e) not in DEAD_STATUSES]
     sc = scale or {}
     detail_r = sc.get("detail_radius")
     route_r = sc.get("route_radius")
-    lines = [f"Battle time elapsed: {format_clock(state['time'])}", ""]
-    header = "id | name | kind | x,z | men/max | morale | stamina"
-    if terrain:
-        header += " | terrain/relief"
-    lines.append(f"YOUR UNITS ({header} | nearest visible enemy" + (" | terrain to it" if terrain else "")
-                 + ("; units far from the enemy get a short line" if detail_r else "") + "):")
+    # 0.1.4 WIP10: the clock of this phase (the game's own mission clock), the whole battle's in brackets. The model
+    # read the cumulated clock of two chained phases (95 to 226 min in a phase of 142 min) on 2026-11-13.
+    if state.get("phaseTime") is not None and abs(float(state["phaseTime"]) - float(state["time"])) > 60.0:
+        lines = [f"Battle time elapsed: {format_clock(float(state['phaseTime']))} in this phase "
+                 f"({format_clock(state['time'])} since the first phase)", ""]
+    else:
+        lines = [f"Battle time elapsed: {format_clock(state['time'])}", ""]
+    lines.append("YOUR UNITS (id | name | kind | x,z | men | morale | stamina | ground/height | nearest enemy | notes):")
+    wagons_listed = bool(supply_lines(state))
     for u in mine:
-        near = nearest(u, foes)
+        if u["kind"] == "Supply" and wagons_listed and u.get("supplyStock") is not None:
+            continue                                   # listed once, under SUPPLY WAGONS
+        near = nearest(u, foes_live)
         near_txt = (f"#{near[0]['id']} at {near[1]:.0f}{range_flag(u, near[1], ranges)}"
                     if near else "none visible")
         line = (f"{u['id']} | {u['name']} | {u['kind']} | {_xz(u)} | "
                 f"{_men(u)} | {u['morale']:.2f} | {u['fatigue']:.2f}")
-        if detail_r and u["kind"] != "Artillery" and (not near or near[1] > float(detail_r)):
-            # far from the fight: position, strength and state are enough (batteries keep the full line: their
-            # terrain and reach matter at any distance)
-            if unit_status(u):
-                line += f" | STATUS {unit_status(u).upper()}"
-            line += f" | {near_txt}"
-            dyn = equipment_dynamic(u)
-            if dyn:
-                line += f" | {dyn}"
-            lines.append(line)
-            continue
-        if terrain:
-            line += f" | {terrain.name_at(u['x'], u['z'])}/{terrain.height_at(u['x'], u['z'])}"
+        notes = []
         if unit_status(u):
-            line += f" | STATUS {unit_status(u).upper()}"
-        line += f" | {near_txt}"
+            notes.append(f"STATUS {unit_status(u).upper()}")
         if marching and u["id"] in marching:
             dest = marching[u["id"]]
-            line += f" | MARCHING to {dest[0]:.0f},{dest[1]:.0f}"
-        equip = equipment_text(u, roster)
+            notes.append(f"MARCHING to {round(dest[0], -1):.0f},{round(dest[1], -1):.0f}")
+        if u.get("canScout"):
+            notes.append("can detach skirmishers")
+        if u["kind"] == "Skirmish" and u.get("owner") is not None:
+            notes.append(f"screen of #{u['owner']}")
+        in_roster = roster is not None and u.get("id") in roster
+        equip = equipment_brief(u) if in_roster else equipment_text(u, roster)
+        staff = u["kind"] in ("General", "Supply")
+        far = bool(detail_r) and u["kind"] != "Artillery" and (not near or near[1] > float(detail_r))
+        if far or staff:
+            # far from the fight, or not a fighting unit: position, strength and state are enough
+            if staff:
+                equip = " ".join(b for b in equip.split(" ") if not b.startswith("r")) if in_roster else equip
+            line += " | - | " + near_txt
+        else:
+            ground = f"{terrain.name_at(u['x'], u['z'])}/{terrain.height_at(u['x'], u['z'])}" if terrain else "-"
+            line += f" | {ground} | {near_txt}"
+            if near:
+                flag = facing_flag(u, near[0]["x"], near[0]["z"]).strip()
+                if flag:
+                    notes.append(flag)
+                if terrain and (not route_r or near[1] <= float(route_r)):
+                    way = terrain.route_brief(u["x"], u["z"], near[0]["x"], near[0]["z"], u["kind"])
+                    if way:
+                        notes.append(way)
         if equip:
-            line += f" | EQUIP {equip}"
-        if near:
-            line += f" |{facing_flag(u, near[0]['x'], near[0]['z'])}".rstrip() if facing_flag(u, near[0]['x'], near[0]['z']) else ""
-        if terrain and near and (not route_r or near[1] <= float(route_r)):
-            line += " | " + terrain.route_report(u["x"], u["z"], near[0]["x"], near[0]["z"])
+            notes.insert(0, equip)
+        if notes:
+            line += " | " + "; ".join(notes)
         lines.append(line)
+    # a captured unit stands on its captor's side in the state: our prisoners are among the enemy's units and the
+    # prisoners we took among ours
+    out_mine = (sum(1 for u in mine_all if unit_status(u) == "shattered")
+                + sum(1 for u in foes_all if unit_status(u) == "captured"))
+    out_foes = (sum(1 for u in foes_all if unit_status(u) == "shattered")
+                + sum(1 for u in mine_all if unit_status(u) == "captured"))
+    if out_mine:
+        lines.append(f"(+{out_mine} of your units shattered or captured, not listed)")
     lines.append("")
     if foes:
-        header = "id | name | kind | x,z | men | morale" + (" | terrain/relief" if terrain else "")
-        enemy_r = sc.get("enemy_detail_radius")
-        max_detail = sc.get("max_enemy_detail")
-        listed = foes
-        detailed = None
-        if enemy_r or max_detail:
-            dist = {e["id"]: (nearest(e, mine) or (None, 1e9))[1] for e in foes}
-            listed = sorted(foes, key=lambda e: dist[e["id"]])      # nearest first
-            near_ids = [e["id"] for e in listed if not enemy_r or dist[e["id"]] <= float(enemy_r)]
-            detailed = set(near_ids[:int(max_detail)] if max_detail else near_ids)
-            header += "; nearest first, distant ones get a short line"
-        lines.append(f"VISIBLE ENEMY UNITS ({header}):")
+        enemy_r = sc.get("enemy_detail_radius", 900)
+        max_detail = sc.get("max_enemy_detail", 30)
+        dist = {e["id"]: (nearest(e, mine) or (None, 1e9))[1] for e in foes}
+        listed = sorted(foes, key=lambda e: dist[e["id"]])      # nearest first
+        near_ids = [e["id"] for e in listed if unit_status(e) not in DEAD_STATUSES
+                    and (not enemy_r or dist[e["id"]] <= float(enemy_r))]
+        detailed = set(near_ids[:int(max_detail)] if max_detail else near_ids)
+        lines.append("VISIBLE ENEMY UNITS, nearest first (id | name | kind | x,z | men | morale | ground/height | notes):")
+        perk_ids = {}
         for u in listed:
             line = (f"{u['id']} | {u['name']} | {u['kind']} | {_xz(u)} | "
                     f"{u['hp']:.0f} | {u['morale']:.2f}")
-            if detailed is not None and u["id"] not in detailed:
-                if unit_status(u):
-                    line += f" | STATUS {unit_status(u).upper()}"
-                lines.append(line)
-                continue
-            if terrain:
-                line += f" | {terrain.name_at(u['x'], u['z'])}/{terrain.height_at(u['x'], u['z'])}"
+            notes = []
             if unit_status(u):
-                line += f" | STATUS {unit_status(u).upper()}"
-            equip = equipment_enemy(u)
-            if equip:
-                line += f" | EQUIP {equip}"
+                notes.append(f"STATUS {unit_status(u).upper()}")
+            if u["id"] in detailed:
+                if terrain:
+                    line += f" | {terrain.name_at(u['x'], u['z'])}/{terrain.height_at(u['x'], u['z'])}"
+                bits = [b for b in (enemy_bore(u), equipment_brief(u, own=False)) if b]
+                if u.get("stars"):
+                    bits.append(f"{int(u['stars'])}*")
+                if bits:
+                    notes.append(" ".join(bits))
+                for p in (u.get("perks") or []):
+                    if p:
+                        perk_ids.setdefault(str(p), []).append(u["id"])
+            if notes:
+                line += " | " + "; ".join(notes)
             lines.append(line)
+        if perk_ids:
+            lines.append("ENEMY PERKS (unit ids): " + "; ".join(
+                f"{p}: " + ",".join(str(i) for i in ids) for p, ids in sorted(perk_ids.items())))
     else:
         lines.append("VISIBLE ENEMY UNITS: none")
+    if out_foes:
+        lines.append(f"(+{out_foes} enemy units shattered or captured, not listed)")
     plan_lines = front_line_plan(mine, foes, ranges, line_cfg, terrain, line_memory)
     if plan_lines:
         lines.append("")
@@ -776,7 +908,7 @@ def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None,
     opportunities = charge_opportunities(mine, foes, ranges, int(sc.get("max_charge", 12)))
     if opportunities:
         lines.append("")
-        lines.append("CHARGE OPPORTUNITIES (weakest enemy in charge range):")
+        lines.append("CHARGE OPPORTUNITIES (your unit -> weak enemy in its charge range):")
         lines.extend(opportunities)
     battery = battery_lines(state)
     cav = cavalry_lines(state)
@@ -795,10 +927,8 @@ def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None,
     if previous_orders:
         lines.append("")
         names = {u["id"]: u["name"] for u in state["units"]}
-        if sc.get("compact_orders"):
-            lines.append("YOUR ORDERS LAST TURN: " + "; ".join(compact_order(o) for o in previous_orders))
-        else:
-            lines.append("YOUR ORDERS LAST TURN: " + "; ".join(order_text(o, names) for o in previous_orders))
+        lines.append("ORDERS RUNNING (* = given by the server): "
+                     + "; ".join(compact_order(o) for o in previous_orders[:40]))
     if events:
         lines.append("EVENTS SINCE LAST TURN: " + "; ".join(events[-10:]))
     if extra_lines:
@@ -809,13 +939,85 @@ def build_user_prompt(state, previous_orders, events, terrain=None, ranges=None,
     return "\n".join(lines)
 
 
-def parse_answer(text):
-    """Extract the JSON object from the model text. Returns (reasoning, raw_orders)."""
-    text = text.strip()
+def _balance_fix(text):
+    """Common slips of a model writing JSON by hand: an extra closing brace before ']' ("}}]"), trailing commas."""
+    out = re.sub(r",\s*([\]}])", r"\1", text)
+    fixed, depth, in_str, esc = [], [], False, False
+    for ch in out:
+        if in_str:
+            fixed.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            depth.append(ch)
+        elif ch in "}]":
+            want = "{" if ch == "}" else "["
+            if not depth or depth[-1] != want:
+                continue                               # a closer that closes nothing: drop it
+            depth.pop()
+        fixed.append(ch)
+    return "".join(fixed) + "".join("}" if d == "{" else "]" for d in reversed(depth))
+
+
+def _unescape(text):
+    """A JSON string body cut out by a regex, with its escapes decoded (left as it is when it cannot be)."""
+    try:
+        return json.loads('"' + text + '"')
+    except ValueError:
+        return text
+
+
+def load_answer(text):
+    """The JSON object of the model answer as a dict. Tolerant: code fences, an extra brace, a trailing comma or
+    a cut-off end are repaired; as a last resort the flat order objects are salvaged one by one. Raises ValueError
+    only when nothing usable is found (a lost answer costs a whole model call)."""
+    if isinstance(text, dict):
+        return text
+    text = str(text or "").strip()
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
         raise ValueError("no JSON object in the answer")
-    data = json.loads(text[start:end + 1])
+    body = text[start:end + 1]
+    for candidate in (body, _balance_fix(body), _balance_fix(text[start:])):
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                return data
+        except ValueError:
+            continue
+    orders, assaults = [], []
+    for m in re.finditer(r"\{[^{}]*\}", body):
+        try:
+            obj = json.loads(m.group(0))
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and "cmd" in obj:
+            orders.append(obj)
+        elif isinstance(obj, dict) and "objective" in obj:
+            assaults.append(obj)
+    if not orders and not assaults:
+        raise ValueError("the answer is not valid JSON and no order could be salvaged")
+    data = {"orders": orders, "_salvaged": True}
+    if assaults:
+        data["assaults"] = assaults
+    m = re.search(r'"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)"', body)
+    data["reasoning"] = _unescape(m.group(1)) if m else ""
+    m = re.search(r'"plan"\s*:\s*"((?:[^"\\]|\\.)*)"', body)
+    if m:
+        data["plan"] = _unescape(m.group(1))
+    return data
+
+
+def parse_answer(text):
+    """Extract the JSON object from the model text. Returns (reasoning, raw_orders)."""
+    data = load_answer(text)
     orders = data.get("orders", [])
     if not isinstance(orders, list):
         raise ValueError("'orders' is not a list")
@@ -825,25 +1027,27 @@ def parse_answer(text):
 def extract_plan(text):
     """The optional "plan" text of the model answer ('' when there is none or the JSON cannot be read)."""
     try:
-        start, end = text.find("{"), text.rfind("}")
-        data = json.loads(text[start:end + 1])
+        data = load_answer(text)
         return " ".join(str(data.get("plan") or "").split())[:600]
     except (ValueError, AttributeError, TypeError):
         return ""
 
 
 def extract_assaults(text):
-    """The optional "assaults" macro command of the model answer: None when absent (keep the previous one), else a
-    list of at most 2 cleaned directives ([] = back to the server's own choice)."""
+    """The optional "assaults" macro command of the model answer: None when absent or empty (keep the previous
+    one), else a list of at most 2 cleaned directives."""
     try:
-        start, end = text.find("{"), text.rfind("}")
-        data = json.loads(text[start:end + 1])
+        data = load_answer(text)
     except (ValueError, AttributeError, TypeError):
         return None
     if not isinstance(data, dict) or "assaults" not in data:
         return None
     raw = data.get("assaults")
     if not isinstance(raw, list):
+        return None
+    if not raw:
+        # an empty list is what models write for "nothing to change": it must not reset a running assault
+        # (the documented way to hand an assault back is launch "release")
         return None
     out, used = [], set()
     for a in raw[:2]:
@@ -961,7 +1165,9 @@ def _sanitize_combat(raw_orders, state, max_orders, terrain, fire_range, pending
                         and math.hypot(order["x"] - me["x"], order["z"] - me["z"]) <= 250)
             if fire_range and me["kind"] in FIRING_KINDS:
                 near = nearest(me, [e for e in foes if unit_status(e) not in DEAD_STATUSES])
-                if near and near[1] <= float(fire_range) and not sidestep:
+                # the unit's own weapon range (a musket brigade 450 away is not "in fire range" because the
+                # config says 500: its move to close in must stay a move)
+                if near and near[1] <= float(unit_range(me, fire_range) or fire_range) and not sidestep:
                     # A moving unit cannot fire: a unit in fire range stands and shoots instead.
                     bump("moves turned into range_attack (unit in fire range)")
                     order = {"cmd": "range_attack", "id": uid, "target": near[0]["id"]}
@@ -1034,6 +1240,26 @@ def _sanitize_combat(raw_orders, state, max_orders, terrain, fire_range, pending
                 continue                                     # already in (or going to) that mode
             limber_orders.append({"cmd": "mount", "id": uid, "value": o["value"]})
             continue
+        elif cmd in ("detach", "recall"):
+            # 0.1.4 WIP10: skirmish screens (plugin UnitExtras.Detach / Recall)
+            me = by_id[uid]
+            if cmd == "detach" and not me.get("canScout"):
+                bump("detach orders dropped (this brigade cannot detach skirmishers now)")
+                continue
+            if cmd == "recall" and (me["kind"] != "Skirmish" or me.get("owner") is None):
+                continue
+            limber_orders.append({"cmd": cmd, "id": uid})
+            continue
+        elif cmd == "fortify":
+            # WIP17 (Antietam: 703 work cells, never more than 3 AI brigades in them): plugin UnitExtras.Fortify
+            if by_id[uid]["kind"] != "Infantry" or by_id[uid].get("fort"):
+                bump("fortify orders dropped (not infantry, or already in a work)")
+                continue
+            try:
+                if o.get("x") is not None and o.get("z") is not None:
+                    order["x"], order["z"] = float(o["x"]), float(o["z"])
+            except (TypeError, ValueError):
+                pass
         elif cmd == "hold":
             if by_id[uid]["kind"] == "Artillery" and uid in (pending_moves or {}):
                 bump("holds dropped (a battery still on its march: a hold would leave it packed)")

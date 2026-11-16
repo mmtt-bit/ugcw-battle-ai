@@ -15,7 +15,8 @@ DEFAULT_FINAL = {
     "enabled": True,
     "minutes_left": 20.0,        # the final charge starts when the battle timer shows this little time left
     "charge_minutes_left": 12.0,  # ...and the brigades charge at the latest at this one
-    "min_morale": 0.7,
+    "min_morale": 0.8,           # rested enough to last the whole charge...
+    "fallback_morale": 0.7,      # ...or this much when fewer than two brigades have min_morale
     "max_distance": 2500.0,      # brigades this far from the objective at most take part
     "defender_radius": 700.0,
     "open_distance": 500.0,      # charge distance over open ground...
@@ -23,6 +24,7 @@ DEFAULT_FINAL = {
     "slow_share": 0.25,
     "ready_share": 0.6,          # share of the brigades in charge distance that sends them all in
     "keep_back": 1,              # fresh brigades kept out of it (the last reserve), nearest the other objectives
+    "recharge_s": 90.0,          # a brigade thrown back charges again after this long (battle seconds)
 }
 
 
@@ -41,9 +43,12 @@ def final_charge_orders(state, orders, target, cfg, mem, terrain=None, last_cmds
         return set(), [], []                         # already ours
     live_foes = [e for e in foes if unit_status(e) not in DEAD_STATUSES]
     defenders = [e for e in live_foes if _d(e, target) <= float(cfg["defender_radius"])]
-    fresh = [u for u in mine if unit_status(u) == "" and u["morale"] >= float(cfg["min_morale"])
-             and (u["kind"] == "Infantry" or (u["kind"] == "Cavalry" and u.get("mount") in (None, "mounted")))
-             and _d(u, target) <= float(cfg["max_distance"])]
+    able = [u for u in mine if unit_status(u) == ""
+            and (u["kind"] == "Infantry" or (u["kind"] == "Cavalry" and u.get("mount") in (None, "mounted")))
+            and _d(u, target) <= float(cfg["max_distance"])]
+    fresh = [u for u in able if u["morale"] >= float(cfg["min_morale"])]
+    if len(fresh) < 2:
+        fresh = [u for u in able if u["morale"] >= float(cfg.get("fallback_morale", cfg["min_morale"]))]
     fresh.sort(key=lambda u: _d(u, target))
     keep = int(cfg["keep_back"])
     if keep > 0 and len(fresh) > keep + 1:
@@ -78,6 +83,10 @@ def final_charge_orders(state, orders, target, cfg, mem, terrain=None, last_cmds
             print(f"  FINAL CHARGE: {len(in_reach)} of {len(with_targets)} brigade(s) in reach, all charge now")
     by_id = {o["id"]: o for o in orders}
     drop, out = set(), []
+    now = float(state.get("time", 0.0))
+    charged = mem.setdefault("charged", {})          # unit id -> battle time of its last charge order
+    if quiet:
+        charged = dict(charged)                      # preview for the prompt: never write the real memory
     for u, e, d, lim in plan:
         last = (last_cmds or {}).get(u["id"]) or {}
         own = by_id.get(u["id"])
@@ -91,8 +100,12 @@ def final_charge_orders(state, orders, target, cfg, mem, terrain=None, last_cmds
             else:
                 continue
         elif go and d <= lim * 1.2:
-            if last.get("cmd") == "charge" and last.get("target") == e["id"]:
+            # `fresh` holds only brigades that are not in melee: one whose last order was this charge either is
+            # still running in, or was thrown back and stands idle. It charges again after `recharge_s`.
+            if (last.get("cmd") == "charge" and last.get("target") == e["id"]
+                    and now - float(charged.get(u["id"], -1e9)) < float(cfg["recharge_s"])):
                 continue
+            charged[u["id"]] = now
             cmd = {"cmd": "charge", "id": u["id"], "target": e["id"], "auto": True}
             key = "final charge: brigades charging the defenders together"
         elif d > lim:

@@ -8,7 +8,7 @@ orders, the server checks them against the rules of the game, and the game resum
 It follows the design of [rome-battle-ai](https://github.com/Cegli865/rome-battle-ai) by Cegli865
 (Total War: ROME REMASTERED), adapted to Ultimate General: Civil War (Unity 5.4.4, Mono).
 
-> **Status: beta (v0.1.3-beta).** Tested on a few missions, one battle at a time, on Windows.
+> **Status: beta (v0.1.4-beta).** Tested on a few missions, one battle at a time, on Windows.
 > Expect rough edges. Bug reports with the server console text and the files in `logs/` and
 > `reports/` are welcome.
 

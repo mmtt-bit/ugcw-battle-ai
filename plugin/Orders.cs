@@ -23,6 +23,15 @@ namespace UgcwAi
 			{
 				Orders.Fallback((uint)o["id"], (o["duration"] != null) ? ((float)o["duration"]) : 20f);
 			}
+			else if (cmd == "release")
+			{
+				// 0.1.4 WIP7: the server gives a unit back to the game's AI (a unit stuck off the field)
+				UnitModel unitModel = Orders.Find((uint)o["id"]);
+				if (unitModel != null && unitModel.IsAlive && unitModel.side != RuntimeVars.playerSide)
+				{
+					Commands.ReleaseToGame(unitModel);
+				}
+			}
 			else if (cmd == "formation")
 			{
 				Orders.SetFormation((uint)o["id"], (string)o["value"]);
@@ -63,6 +72,12 @@ namespace UgcwAi
 			UnitModel unitModel = Orders.Find(id);
 			if (unitModel == null || !unitModel.IsAlive || unitModel.side == RuntimeVars.playerSide)
 			{
+				return null;
+			}
+			// 0.1.4 WIP7: a unit still off the field stays with the game's AI (see Commands.OnField)
+			if (!Commands.OnField(unitModel))
+			{
+				Commands.ReleaseToGame(unitModel);
 				return null;
 			}
 			if (unitModel.IsUnderAIControl)

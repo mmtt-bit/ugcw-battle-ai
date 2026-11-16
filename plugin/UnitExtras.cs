@@ -19,6 +19,22 @@ namespace UgcwAi
     {
         public static void Write(GOAP.UnitModel u, JObject o)
         {
+            // 0.1.4 WIP10: skirmish screens. A screen carries the brigade it came from; a brigade that can detach one
+            // (the game's own "pop skirmishers" test) carries canScout.
+            try
+            {
+                GOAP.ScoutModel sc = u as GOAP.ScoutModel;
+                if (sc != null) o["owner"] = sc.ownerUnitID;
+                else if (CanDetach(u)) o["canScout"] = true;
+            }
+            catch (Exception) { }
+            // 0.1.4 WIP9: the game's own test (TerrainController.InWorldBounds): a reinforcement still walking in from
+            // outside the field. Sent only when true, so the server need not guess from its terrain scan.
+            try { if (!Commands.OnField(u)) o["offField"] = true; }
+            catch (Exception) { }
+            // 0.1.4 WIP17: the unit holds a field work (GOAP.UnitModel.Fortification). Sent only when true.
+            try { if (u.Fortification != null) o["fort"] = true; }
+            catch (Exception) { }
             try
             {
                 // Weapon asset name, for example "rifle_Mississippi_1841_RF".
@@ -32,6 +48,14 @@ namespace UgcwAi
             {
                 // Current effective firing range, including the effect of the ammunition mode.
                 o["range"] = Math.Round(u.effectiveRange, 0);
+            }
+            catch (Exception) { }
+            try
+            {
+                // 0.1.4 WIP11: the height the game's rules use (GOAP.UnitModel.altitude, 0 = lowest ground of the map,
+                // 1 = highest, read from the ground under the unit). RangeAttack.RangeDmg compares shooter and target
+                // (difference clamped to -1..1); Morale.Update and get_SpottingRange use the unit's own value.
+                o["alt"] = Math.Round(u.altitude, 3);
             }
             catch (Exception) { }
             try
@@ -203,6 +227,13 @@ namespace UgcwAi
             // orders in a row in one battle and never fired).
             try { if (u.IsUnderAIControl) u.aiData.commander.RemoveUnit(u); }
             catch (Exception e) { UnityEngine.Debug.LogWarning("[UgcwAi] Could not release the battery from the AI: " + e.Message); }
+            if (value != "pack" && Commands.HasRoute(u.id))
+            {
+                // 0.1.4 WIP9: never unlimber a battery on its march (it would stop where it is). 7 unpacks reached
+                // marching batteries on 2026-11-12 14:48 (the state had been read before the move started).
+                UnityEngine.Debug.Log("[UgcwAi] Limber " + u.id + " -> " + value + " ignored: the battery is on its march");
+                return;
+            }
             string before = LimberInfo(u);
             if (value == "pack")
             {
@@ -333,8 +364,141 @@ namespace UgcwAi
         }
 
         // Range at which canister is fired, so the server knows when to switch batteries to canister.
+        // 0.1.4 WIP10: the tests of ButtonsContainer.IsPopScoutButtonEnabled (without the selection and mission ones)
+        public static bool CanDetach(GOAP.UnitModel u)
+        {
+            return u != null && u.Kind == EUnitKind.Infantry && u.IsAlive && u.canCreateScout && !u.IsCaptured
+                   && Rebalance.Methods.CanDetachSkirmisher(u);
+        }
+
+        // The game's "pop skirmishers" button (GameInputController.PopScoutAction): the brigade detaches a screen,
+        // which walks a little ahead by itself (ScoutModel.MoveAfterPop).
+        public static void Detach(GOAP.UnitModel u)
+        {
+            if (!CanDetach(u))
+            {
+                UnityEngine.Debug.Log("[UgcwAi] Detach " + u.id + " refused: this brigade cannot detach skirmishers now");
+                return;
+            }
+            u.CreateScout();
+            UnityEngine.Debug.Log("[UgcwAi] Detach " + u.id + ": skirmishers detached");
+        }
+
+        // The game's "push skirmishers" button (GameInputController.PushScoutAction): the screen walks back into its
+        // brigade (Planner.PushScout).
+        public static void Recall(GOAP.UnitModel u)
+        {
+            GOAP.ScoutModel sc = u as GOAP.ScoutModel;
+            if (sc == null)
+            {
+                UnityEngine.Debug.Log("[UgcwAi] Recall " + u.id + " refused: not a skirmish screen");
+                return;
+            }
+            GOAP.Planner.instance.PushScout(sc);
+            UnityEngine.Debug.Log("[UgcwAi] Recall " + u.id + ": back to brigade " + sc.ownerUnitID
+                                  + " (return delay " + u.ReturnDelayProgress().ToString("0.00") + ")");
+        }
+
+        // 0.1.4 WIP17 (Antietam 2026-11-15: 703 work cells, never more than 3 AI brigades in them). Executes
+        // {"cmd":"fortify","id":N,"x":X,"z":Z}: the brigade marches into the free work nearest X,Z (within 150 of it),
+        // or without x/z into the free work nearest to it within 400. The same call as the player's right click on
+        // the work's shield (Fortification.OnHudPointerDown): GOAP.Planner.TakeFortification(work, unit, true).
+        // (Unit.TakeFortification is not used: it teleports the unit, it is meant for reinforcements placed at start.)
+        public static void Fortify(GOAP.UnitModel u, bool hasPoint, float x, float z)
+        {
+            if (u == null || !u.IsAlive) return;
+            if (u.Fortification != null)
+            {
+                UnityEngine.Debug.Log("[UgcwAi] Fortify " + u.id + ": already in a work");
+                return;
+            }
+            if (!u.abilProps.fortify)
+            {
+                UnityEngine.Debug.Log("[UgcwAi] Fortify " + u.id + ": this unit cannot hold works");
+                return;
+            }
+            System.Collections.IList works = ActiveWorks();
+            if (works == null) return;
+            UnityEngine.Vector2 up = u.PositionV2;          // y = the map's z
+            float cx = hasPoint ? x : up.x, cz = hasPoint ? z : up.y;
+            float limit = hasPoint ? 150f : 400f;
+            string mySide = u.Side.ToString();
+            Fortification best = null;
+            float bestD = limit;
+            for (int i = 0; i < works.Count; i++)
+            {
+                Fortification f = works[i] as Fortification;
+                if (f == null || f.assignedUnit != null || f.Hp <= 0f || !f.IsSupported(u)) continue;
+                string allowed = f.allowedSide.ToString();
+                if ((allowed == "North" || allowed == "South") && allowed != mySide) continue;
+                UnityEngine.Vector3 p = f.transform.position;
+                float d = (float)Math.Sqrt((p.x - cx) * (p.x - cx) + (p.z - cz) * (p.z - cz));
+                if (d < bestD) { bestD = d; best = f; }
+            }
+            if (best == null)
+            {
+                UnityEngine.Debug.Log("[UgcwAi] Fortify " + u.id + ": no free work within " + limit + " of "
+                          + Math.Round(cx, 0) + "," + Math.Round(cz, 0));
+                return;
+            }
+            GOAP.Planner.instance.TakeFortification(best, u, true);
+            UnityEngine.Debug.Log("[UgcwAi] Fortify " + u.id + ": into " + best.name + " at "
+                      + Math.Round(best.transform.position.x, 0) + "," + Math.Round(best.transform.position.z, 0));
+        }
+
+        // FortificationsManager.activeFortifications is private in the game: read it with reflection
+        private static System.Reflection.FieldInfo activeWorksField;
+        private static System.Collections.IList ActiveWorks()
+        {
+            FortificationsManager fm = FortificationsManager.instance;
+            if (fm == null) return null;
+            if (activeWorksField == null)
+                activeWorksField = typeof(FortificationsManager).GetField("activeFortifications",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Public);
+            return activeWorksField != null ? activeWorksField.GetValue(fm) as System.Collections.IList : null;
+        }
+
         public static void WriteRoot(JObject root)
         {
+            // 0.1.4 WIP17: the field works of the current stage: position, hit points, free or held (occupant id)
+            try
+            {
+                System.Collections.IList list = ActiveWorks();
+                if (list != null)
+                {
+                    JArray works = new JArray();
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        Fortification f = list[i] as Fortification;
+                        if (f == null) continue;
+                        UnityEngine.Vector3 p = f.transform.position;
+                        JObject w = new JObject();
+                        w["name"] = f.name;
+                        w["x"] = Math.Round(p.x, 1);
+                        w["z"] = Math.Round(p.z, 1);
+                        w["hp"] = Math.Round(f.Hp, 0);
+                        GOAP.UnitModel au = f.assignedUnit as GOAP.UnitModel;
+                        w["free"] = au == null;
+                        if (au != null) w["occupant"] = au.id;
+                        try { w["side"] = f.allowedSide.ToString(); } catch (Exception) { }
+                        works.Add(w);
+                    }
+                    if (works.Count > 0) root["fortifications"] = works;
+                }
+            }
+            catch (Exception) { }
+            // 0.1.4 WIP9: the playing field of the current stage [minX, minZ, maxX, maxZ]. TerrainController.SetLevel
+            // moves it when a battle stage opens a new part of the map (2026-11-12 14:48: the field grew east to
+            // x = 3,900 while the server's terrain scan stopped at x = 1,610).
+            try
+            {
+                TerrainController tc = TerrainController.instance;
+                if (tc != null)
+                    root["field"] = new JArray(Math.Round(tc.minGameFieldPos.x, 1), Math.Round(tc.minGameFieldPos.y, 1),
+                                               Math.Round(tc.maxGameFieldPos.x, 1), Math.Round(tc.maxGameFieldPos.y, 1));
+            }
+            catch (Exception) { }
             // Rebalance.Methods.GetCanisterRange() exists only when the Rebalance mod is in the DLL: read with
             // reflection so this class compiles (and simply sends no value) without it.
             try

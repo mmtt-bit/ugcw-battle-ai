@@ -20,7 +20,11 @@ namespace UgcwAi
     //             charges it.
     //   UNSEEN    a unit losing men with no visible enemy within its own fire range (shooters hidden in woods or
     //             wheat, camouflaged by a perk, or out-ranging it) charges, closes in or opens the distance,
-    //             depending on "unseen_aggressiveness" (the general's doctrine) and on its freshness.
+    //             depending on "unseen_aggressiveness" (the general's doctrine) and on its freshness. A brigade never
+    //             steps out of the line to do it, and never chases skirmishers or cavalry (WIP11).
+    //   CAVALRY   a shaken infantry brigade or a skirmish screen with enemy cavalry close by takes shelter behind
+    //             the nearest steady brigade (a screen walks back into its own brigade) before the cavalry catches
+    //             it (WIP11).
     //   SAFETY    a threatened battery switches to canister and, with no infantry to cover it, steps back
     //             (fallback, stays unlimbered); a supply wagon or a general with an enemy too close moves away;
     //             a unit in contact whose morale collapses falls back at once.
@@ -49,6 +53,24 @@ namespace UgcwAi
         public static float UnseenLoss = 6f, UnseenShare = 0.003f, UnseenReach = 650f, UnseenWindow = 60f;
         public static float UnseenCooldown = 25f, UnseenAdvanceMorale = 0.7f, UnseenStep = 150f;
         public static float UnseenAggressiveness = 0.5f, UnseenMinRange = 100f, UnseenChargeReach = 400f, UnseenCloseGap = 200f;
+        public static float UnseenAdvanceMax = 350f;   // longest "close in" step of one reflex
+        // 0.1.4 WIP11 (Kettle Run, 2026-11-13): a skirmish screen that out-ranged Trimble made it "close in" twice,
+        // 150 in front of the line; the brigade ended alone in front of three enemy brigades and was captured.
+        public static bool UnseenHoldLine = false;      // the plan defends: no charge on a steady target, no advance
+        public static bool UnseenChaseScreens = false;  // an infantry brigade may close in on skirmishers or cavalry
+        public static bool UnseenRefusedHolds = true;   // WIP12: a refused step forward holds instead of falling back
+        public static float UnseenLineAhead = 100f;     // a step may not end farther than this in front of the
+                                                        // nearest friendly infantry brigade (along the step)...
+        public static float UnseenNeighbourMax = 400f;  // ...nor farther than this from that brigade
+        // CAVALRY reflex (WIP11): at Kettle Run one cavalry regiment took 4 units, all of them shaken or screens.
+        public static bool Cavalry = true;
+        public static float CavalryDanger = 500f;       // shaken infantry: enemy mounted cavalry this close
+        public static float ScreenCavalryDanger = 450f; // skirmish screens: enemy mounted cavalry this close
+        public static float CavalryShakenMorale = 0.5f; // infantry under this morale is "shaken"
+        public static float ShelterMorale = 0.6f;       // a brigade gives shelter from this morale up
+        public static float ShelterSearch = 700f;       // the shelter brigade stands within this of the unit
+        public static float ShelterBehind = 120f;       // the unit stops this far behind its shelter (away from the cavalry)
+        public static float CavalryCooldown = 20f;
         private static readonly Dictionary<uint, float> lastHp = new Dictionary<uint, float>();
         private static readonly Dictionary<uint, float> lossAcc = new Dictionary<uint, float>();
 
@@ -95,9 +117,25 @@ namespace UgcwAi
                 UnseenMinRange = Num(o, "unseen_min_range", UnseenMinRange);
                 UnseenChargeReach = Num(o, "unseen_charge_reach", UnseenChargeReach);
                 UnseenCloseGap = Num(o, "unseen_close_gap", UnseenCloseGap);
+                UnseenAdvanceMax = Num(o, "unseen_advance_max", UnseenAdvanceMax);
+                UnseenHoldLine = Bool(o, "unseen_hold_line", UnseenHoldLine);
+                UnseenChaseScreens = Bool(o, "unseen_chase_screens", UnseenChaseScreens);
+                UnseenRefusedHolds = Bool(o, "unseen_refused_holds", UnseenRefusedHolds);
+                UnseenLineAhead = Num(o, "unseen_line_ahead", UnseenLineAhead);
+                UnseenNeighbourMax = Num(o, "unseen_neighbour_max", UnseenNeighbourMax);
+                Cavalry = Bool(o, "cavalry", Cavalry);
+                CavalryDanger = Num(o, "cavalry_danger", CavalryDanger);
+                ScreenCavalryDanger = Num(o, "screen_cavalry_danger", ScreenCavalryDanger);
+                CavalryShakenMorale = Num(o, "cavalry_shaken_morale", CavalryShakenMorale);
+                ShelterMorale = Num(o, "shelter_morale", ShelterMorale);
+                ShelterSearch = Num(o, "shelter_search", ShelterSearch);
+                ShelterBehind = Num(o, "shelter_behind", ShelterBehind);
+                CavalryCooldown = Num(o, "cavalry_cooldown_s", CavalryCooldown);
                 lastHp.Clear(); lossAcc.Clear();
                 Debug.Log("[UgcwAi] Reflexes configured: enabled=" + Enabled + " face=" + Face + " brace=" + Brace
-                          + " safety=" + Safety);
+                          + " safety=" + Safety + " cavalry=" + Cavalry + " hold_line=" + UnseenHoldLine
+                          + " refused_holds=" + UnseenRefusedHolds
+                          + " line_ahead=" + UnseenLineAhead + " neighbour_max=" + UnseenNeighbourMax);
             }
             catch (Exception e) { Debug.LogWarning("[UgcwAi] Reflexes.Configure: " + e.Message); }
         }
@@ -143,7 +181,8 @@ namespace UgcwAi
                     string kind = u.kind.ToString();
                     try
                     {
-                        if (Unseen && UnseenReflex(u, kind, foes)) continue;
+                        if (Unseen && UnseenReflex(u, kind, mine, foes)) continue;
+                        if (Cavalry && CavalryReflex(u, kind, mine, foes)) continue;
                         if (Safety && SafetyReflex(u, kind, mine, foes)) continue;
                         if (Brace && BraceReflex(u, kind, mine, foes)) continue;
                         if (Face) FaceReflex(u, kind, foes);
@@ -155,6 +194,74 @@ namespace UgcwAi
         }
 
         // ---------------------------------------------------------------- reflexes
+
+        // Enemy cavalry hunts what is alone or already shaken: screens, and brigades that are routing or falling
+        // back, which surrender when it reaches them. A shaken infantry brigade (or any skirmish screen) with enemy
+        // mounted cavalry close by walks behind the nearest steady friendly brigade, on the far side from the
+        // cavalry, before it breaks; a screen whose brigade can take it back walks back into it. A cavalry charge
+        // already coming at the unit is left to BRACE (stop and fire), and so is a unit with no shelter in reach.
+        private static bool CavalryReflex(UnitModel u, string kind, List<UnitModel> mine, List<UnitModel> foes)
+        {
+            bool screen = kind == "Skirmish";
+            if (!screen && kind != "Infantry") return false;
+            if (!screen && u.morale >= CavalryShakenMorale) return false;
+            if (u.State(EUnitState.MeleeCombat) || u.State(EUnitState.Charging) || u.State(EUnitState.Walking)
+                || u.State(EUnitState.Running)) return false;                // fighting, or already on its way
+            float danger = screen ? ScreenCavalryDanger : CavalryDanger;
+            UnitModel cav = null;
+            float cd = danger;
+            foreach (UnitModel e in foes)
+            {
+                if (e.kind.ToString() != "Cavalry" || UnitExtras.MountState(e) != "mounted") continue;
+                float d = Dist(u, e);
+                if (d < cd && u.CanSee(e)) { cd = d; cav = e; }
+            }
+            if (cav == null) return false;
+            if (cav.State(EUnitState.Charging) && cd <= BraceRadius) return false;   // too late to walk: BRACE
+
+            if (screen)
+            {
+                GOAP.ScoutModel sc = u as GOAP.ScoutModel;
+                UnitModel owner = null;
+                if (sc != null)
+                {
+                    foreach (UnitModel n in mine)
+                        if (n.id == sc.ownerUnitID) { owner = n; break; }
+                }
+                if (owner != null && !Broken(owner) && Dist(owner, cav) > Dist(u, cav))
+                {
+                    if (!Ready(u, "cavalry", CavalryCooldown)) return false;
+                    UnitExtras.Recall(u);
+                    Note(u, "cavalry", "screen #" + u.id + " walked back into brigade #" + owner.id
+                         + ", cavalry #" + cav.id + " at " + (int)cd);
+                    return true;
+                }
+            }
+            // the shelter: a steady friendly brigade within reach, the unit stops behind it, away from the cavalry
+            UnitModel shelter = null;
+            Vector2 spot = Vector2.zero;
+            float best = float.MaxValue;
+            foreach (UnitModel n in mine)
+            {
+                if (n == u || Broken(n) || n.kind.ToString() != "Infantry" || n.morale < ShelterMorale) continue;
+                if (n.State(EUnitState.MeleeCombat) || n.State(EUnitState.Fallback)) continue;
+                float dn = Dist(u, n);
+                if (dn > ShelterSearch) continue;
+                Vector2 away = n.PositionV2 - cav.PositionV2;
+                if (away.sqrMagnitude < 1f) continue;
+                Vector2 s = n.PositionV2 + away.normalized * ShelterBehind;
+                if ((s - cav.PositionV2).magnitude <= cd) continue;   // the spot is no farther from the cavalry
+                float ds = (s - u.PositionV2).magnitude;
+                if (ds < best) { best = ds; shelter = n; spot = s; }
+            }
+            if (shelter == null) return false;
+            Vector2 face = cav.PositionV2 - spot;
+            if (face.sqrMagnitude < 1f || !Ready(u, "cavalry", CavalryCooldown)) return false;
+            MoveTo(u, spot, face.normalized);
+            Note(u, "cavalry", (screen ? "screen #" : "#") + u.id + " (morale " + u.morale.ToString("0.00")
+                 + ") took shelter behind #" + shelter.id + ", cavalry #" + cav.id + " at " + (int)cd);
+            return true;
+        }
 
         private static bool SafetyReflex(UnitModel u, string kind, List<UnitModel> mine, List<UnitModel> foes)
         {
@@ -210,7 +317,6 @@ namespace UgcwAi
                 // Locked in melee: a fresh neighbour charges the enemy that is fighting us.
                 UnitModel enemy = NearestSeen(u, foes, true);
                 if (enemy == null || Dist(u, enemy) > 120f || !enemy.State(EUnitState.MeleeCombat)) return false;
-                if (!Ready(u, "counter", BraceCooldown)) return false;
                 UnitModel helper = null;
                 float best = CounterRadius;
                 foreach (UnitModel n in mine)
@@ -223,7 +329,9 @@ namespace UgcwAi
                     float dn = Dist(n, enemy);
                     if (dn < best) { best = dn; helper = n; }
                 }
-                if (helper == null) return false;
+                // (the cooldown starts only when a helper exists: before 0.1.4 a melee with no helper in reach
+                //  used it up, and a helper arriving a second later waited the whole cooldown)
+                if (helper == null || !Ready(u, "counter", BraceCooldown)) return false;
                 helper.CancelActions();
                 Planner.instance.ManualCharge(helper, enemy, false);
                 Note(u, "counter", "#" + helper.id + " charged #" + enemy.id + " locked in melee with #" + u.id);
@@ -294,7 +402,12 @@ namespace UgcwAi
         //           or skirmishers advance toward the nearest visible enemy (or straight ahead) to find the shooters;
         //   >= 0.4  fresh infantry or skirmishers close in only on a visible enemy just out of their range;
         //   else    (and for artillery, supply and tired units) the unit opens the distance.
-        private static bool UnseenReflex(UnitModel u, string kind, List<UnitModel> foes)
+        // WIP11 limits, for infantry brigades (screens are meant to go ahead): no charge or step that ends more than
+        // UnseenLineAhead in front of the nearest friendly brigade or farther than UnseenNeighbourMax from it; no
+        // close-in on skirmishers or cavalry (they fall back faster than a brigade follows and lead it into the fire
+        // of the enemy line); with UnseenHoldLine (the plan defends) no advance at all and a charge only on a shaken
+        // target. A step refused by these limits becomes "open the distance".
+        private static bool UnseenReflex(UnitModel u, string kind, List<UnitModel> mine, List<UnitModel> foes)
         {
             float hp = u.hp, prev;
             bool known = lastHp.TryGetValue(u.id, out prev);
@@ -321,34 +434,62 @@ namespace UgcwAi
             float a = UnseenAggressiveness;
             string tag = "#" + u.id + " under fire, shooters unseen or out of range (" + (int)acc + " men): ";
             Vector2 fwd = new Vector2(u.Direction.x, u.Direction.z);
+            bool line = kind == "Infantry";                            // a line brigade: keeps its place in the line
+            string seenKind = seen != null ? seen.kind.ToString() : "";
+            string refused = "";                                       // why a step forward was refused (log)
 
             if (a >= 0.7f && fresh && seen != null && (kind == "Infantry" || mounted) && seenD <= UnseenChargeReach
-                && (seen.kind.ToString() == "Skirmish" || seen.morale < 0.5f))
+                && (seenKind == "Skirmish" || seen.morale < 0.5f))
             {
-                u.CancelActions();
-                Planner.instance.ManualCharge(u, seen, false);
-                Note(u, "unseen", tag + "charged #" + seen.id);
-                return true;
+                Vector2 toSeen = (seen.PositionV2 - u.PositionV2).normalized;
+                if (line && UnseenHoldLine && seen.morale >= 0.5f) refused = "the plan defends";
+                else if (line && !KeepsLine(u, seen.PositionV2, toSeen, mine)) refused = "it would leave the line";
+                else
+                {
+                    u.CancelActions();
+                    Planner.instance.ManualCharge(u, seen, false);
+                    Note(u, "unseen", tag + "charged #" + seen.id);
+                    return true;
+                }
             }
             bool foot = kind == "Infantry" || kind == "Skirmish";
             bool advance = foot && fresh && (a >= 0.7f || (a >= 0.4f && seen != null && seenD <= myRange + UnseenCloseGap));
+            if (advance && line && UnseenHoldLine) { advance = false; refused = "the plan defends"; }
+            if (advance && line && !UnseenChaseScreens && (seenKind == "Skirmish" || seenKind == "Cavalry"))
+            {
+                advance = false;
+                refused = "no chase of " + seenKind.ToLower();
+            }
             if (advance)
             {
                 Vector2 to, pos;
                 if (seen != null)
                 {
                     to = (seen.PositionV2 - u.PositionV2).normalized;
-                    pos = u.PositionV2 + to * Mathf.Max(0f, seenD - myRange * 0.8f);
-                    Note(u, "unseen", tag + "closed in on #" + seen.id + " to answer its fire");
+                    // a bounded step: the nearest VISIBLE enemy may stand far behind the hidden shooters
+                    pos = u.PositionV2 + to * Mathf.Min(UnseenAdvanceMax, Mathf.Max(0f, seenD - myRange * 0.8f));
                 }
                 else
                 {
                     if (fwd.sqrMagnitude < 0.01f) return false;
                     to = fwd.normalized;
                     pos = u.PositionV2 + to * UnseenStep;
-                    Note(u, "unseen", tag + "advanced to find the shooters");
                 }
-                MoveTo(u, pos, to);
+                if (line && !KeepsLine(u, pos, to, mine)) refused = "it would leave the line";
+                else
+                {
+                    if (seen != null) Note(u, "unseen", tag + "closed in on #" + seen.id + " to answer its fire");
+                    else Note(u, "unseen", tag + "advanced to find the shooters");
+                    MoveTo(u, pos, to);
+                    return true;
+                }
+            }
+            // WIP12: a fresh brigade whose step forward was refused (line, plan, screens) holds its place and fires
+            // back; the WIP11 fallback here broke the line it meant to keep (32 fallbacks in the 15:48 battle).
+            // Out-ranged by a skirmish screen or cavalry ("no chase of ..."), it still opens the distance.
+            if (foot && UnseenRefusedHolds && (refused == "it would leave the line" || refused == "the plan defends"))
+            {
+                Note(u, "unseen", tag + "held its place (no step forward: " + refused + ")");
                 return true;
             }
             // open the distance: away from the nearest visible enemy, else back from where the unit faces
@@ -359,7 +500,8 @@ namespace UgcwAi
             {
                 u.CancelActions();
                 Planner.instance.ManualFallback(u, 20f);
-                Note(u, "unseen", tag + "fell back to open the distance");
+                Note(u, "unseen", tag + "fell back to open the distance"
+                     + (refused.Length > 0 ? " (no step forward: " + refused + ")" : ""));
             }
             else
             {
@@ -398,6 +540,24 @@ namespace UgcwAi
         private static float Dist(UnitModel a, UnitModel b)
         {
             return (a.PositionV2 - b.PositionV2).magnitude;
+        }
+
+        // True when a brigade at "pos", having stepped in direction "to", is still in the line: at most
+        // UnseenLineAhead in front of the nearest friendly infantry brigade (measured along "to") and at most
+        // UnseenNeighbourMax from it. With no other brigade on the field there is no line to keep.
+        private static bool KeepsLine(UnitModel u, Vector2 pos, Vector2 to, List<UnitModel> mine)
+        {
+            UnitModel nb = null;
+            float bd = float.MaxValue;
+            foreach (UnitModel m in mine)
+            {
+                if (m == u || Broken(m) || m.kind.ToString() != "Infantry") continue;
+                float d = Dist(u, m);
+                if (d < bd) { bd = d; nb = m; }
+            }
+            if (nb == null) return true;
+            Vector2 rel = pos - nb.PositionV2;
+            return rel.magnitude <= UnseenNeighbourMax && Vector2.Dot(rel, to) <= UnseenLineAhead;
         }
 
         private static UnitModel NearestSeen(UnitModel u, List<UnitModel> foes, bool needSight)
@@ -466,14 +626,17 @@ namespace UgcwAi
 
         private static void OnReflexMoveDone(UnitModel unit, bool isCanceled) { }
 
+        // A key sent as JSON null keeps the default (before WIP11 the cast threw and stopped Configure half-way).
         private static float Num(JObject o, string key, float def)
         {
-            return o[key] != null ? (float)o[key] : def;
+            JToken t = o[key];
+            return t != null && t.Type != JTokenType.Null ? (float)t : def;
         }
 
         private static bool Bool(JObject o, string key, bool def)
         {
-            return o[key] != null ? (bool)o[key] : def;
+            JToken t = o[key];
+            return t != null && t.Type != JTokenType.Null ? (bool)t : def;
         }
     }
 }

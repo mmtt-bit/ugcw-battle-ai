@@ -32,7 +32,7 @@ class ClaudeCodeBackend:
     """
 
     def __init__(self, command="claude", model="sonnet", effort=None, timeout_s=75,
-                 workdir="claude_workdir", extra_args=None):
+                 workdir="claude_workdir", extra_args=None, cache_ttl=None):
         exe = shutil.which(command)
         if exe is None:
             raise BackendError(
@@ -45,6 +45,13 @@ class ClaudeCodeBackend:
         # Run from an empty folder so no project CLAUDE.md, hooks or MCP servers get loaded.
         self.workdir = os.path.abspath(workdir)
         self.extra_args = list(extra_args or [])
+        # Lifetime of the prompt cache: None = Claude Code's own choice (one hour on a subscription, five minutes
+        # with an API key), "5m" or "1h" (CLAUDE_CODE_PROMPT_CACHE_TTL, Claude Code 2.1.242 or later). One-hour
+        # cache writes cost 2x the input price, five-minute ones 1.25x; a cache that expired is written again in
+        # full (the whole system prompt).
+        self.cache_ttl = cache_ttl if cache_ttl in ("5m", "1h") else None
+        if cache_ttl and self.cache_ttl is None:
+            print(f"  claude_code.cache_ttl {cache_ttl!r} ignored: use \"5m\", \"1h\" or null")
         self.last_info = {}
         os.makedirs(self.workdir, exist_ok=True)
 
@@ -71,9 +78,12 @@ class ClaudeCodeBackend:
         if self.effort:
             args += ["--effort", self.effort]
         args += self.extra_args
+        env = None
+        if self.cache_ttl:
+            env = dict(os.environ, CLAUDE_CODE_PROMPT_CACHE_TTL=self.cache_ttl)
         try:
             proc = subprocess.run(args, input=user_prompt, capture_output=True, text=True,
-                                  encoding="utf-8", timeout=self.timeout_s, cwd=self.workdir)
+                                  encoding="utf-8", timeout=self.timeout_s, cwd=self.workdir, env=env)
         except subprocess.TimeoutExpired:
             raise BackendError(f"claude timed out after {self.timeout_s}s")
         except OSError as e:

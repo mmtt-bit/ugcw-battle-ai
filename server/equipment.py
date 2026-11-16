@@ -19,6 +19,66 @@ MIN_RANGE, MAX_RANGE = 100.0, 3000.0     # ignore absurd values reported by the 
 BREECH_WORDS = ("sharps", "spencer", "henry", "burnside", "maynard", "gallagher", "colt", "revolving")
 
 
+# The game's own table of how each weapon is loaded (weapons/WeaponShootTypes.txt, from the game files: one line
+# per weapon, `asset name,"type"`). With it the tags no longer rest on the words of the asset name: the Smith,
+# Richmond, Wesson and sawed-off carbines and the 1863 rifle are breech-loaders that those words missed, and the
+# Colt and Remington "Sabel" weapons are the revolvers of sabre cavalry, not long-range repeaters.
+SHOOT_TYPES = {}
+# Fire of a unit compared with a muzzle-loading single shot (a rough weight for the server's own choices, not a
+# figure of the game): how fast the weapon is served.
+FIRE_WEIGHT = {"single": 1.0, "flintlock": 0.85, "breech": 1.4, "double": 1.2, "revolver": 1.0, "repeater": 2.0}
+
+
+def load_shoot_types(path=None):
+    """Reads the table (missing file = the old tags from the asset name). Returns the number of weapons read."""
+    import os
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "weapons", "WeaponShootTypes.txt")
+    SHOOT_TYPES.clear()
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            for line in f:
+                name, _, kind = line.strip().partition(",")
+                if name and kind:
+                    SHOOT_TYPES[name.strip().lower()] = kind.strip().strip('"')
+    except OSError:
+        pass
+    return len(SHOOT_TYPES)
+
+
+def shoot_class(name):
+    """(class, rounds) of a weapon from the game's table: class is "single", "flintlock", "breech", "double",
+    "revolver" (n-shot cylinder) or "repeater" (n-round magazine); for guns "" (their bore is in the asset name).
+    None when the weapon is not in the table."""
+    kind = SHOOT_TYPES.get(str(name or "").lower())
+    if kind is None:
+        return None
+    low = kind.lower()
+    m = re.match(r"(\d+)-(shot|round)", low)
+    if m:
+        return ("revolver" if "cylinder" in low else "repeater"), int(m.group(1))
+    if "gun" in low or "howitzer" in low:
+        return ("breech" if "breech" in low else ""), 0
+    if "breech" in low:
+        return "breech", 0
+    if "double" in low:
+        return "double", 0
+    if "flintlock" in low:
+        return "flintlock", 0
+    return "single", 0
+
+
+def fire_weight(u):
+    """See FIRE_WEIGHT; 1.0 for a weapon the table does not know."""
+    got = shoot_class(u.get("weapon") if isinstance(u, dict) else u)
+    return FIRE_WEIGHT.get(got[0], 1.0) if got else 1.0
+
+
+def _class_tag(got):
+    kind, n = got
+    return {"breech": "breech-loader", "double": "double barrel", "flintlock": "flintlock",
+            "revolver": f"{n}-shot revolver", "repeater": f"{n}-round repeater"}.get(kind, "")
+
+
 def _words(text):
     """'rifle_Mississippi_1841_RF' / 'PerkSharpshooter' -> 'rifle Mississippi 1841 RF'."""
     text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", str(text).replace("_", " "))
@@ -37,7 +97,11 @@ def weapon_label(name):
     elif parts and parts[-1].upper() == "RF":
         parts = parts[:-1]
         tags.append("rifled")
-    if any(w in str(name).lower() for w in BREECH_WORDS):
+    got = shoot_class(name)
+    if got is not None:
+        if _class_tag(got):
+            tags.append(_class_tag(got))
+    elif any(w in str(name).lower() for w in BREECH_WORDS):
         tags.append("breech-loader or repeater")
     label = _words(" ".join(parts))
     return f"{label} ({', '.join(tags)})" if tags else label
@@ -180,6 +244,49 @@ def equipment_enemy(u):
     return "; ".join(b for b in bits + ([dynamic] if dynamic else []) if b)
 
 
+def equipment_brief(u, own=True):
+    """The changing part of a unit's equipment in a few characters, for the per-turn tables:
+    'r442' = fire range 442; 'ammo 56%' only under 75 % (own units) or 40 % (enemy); PACKED / unlimbering /
+    packing up for a battery that cannot fire; canister or mixed ammunition; DISMOUNTED cavalry; a wagon's stock.
+    Nothing is written for the normal case (full ammunition, battery ready, cavalry mounted)."""
+    bits = []
+    if "range" in u:
+        r = unit_range(u, 0)
+        if r:
+            bits.append(f"r{r:.0f}")
+    if u.get("supplyStock") is not None and _num(u, "supplyStock", "x"):
+        bits.append(f"stock {float(u['supplyStock']) * 100:.0f}%")
+    if u.get("mount") and u["mount"] != "mounted":
+        bits.append({"dismounted": "DISMOUNTED"}.get(str(u["mount"]), str(u["mount"])))
+    if u.get("limber") and u["limber"] != "ready":
+        bits.append({"packed": "PACKED", "packing": "packing up", "unpacking": "unlimbering"}.get(
+            str(u["limber"]), str(u["limber"])))
+    if u.get("ammoMode") in AMMO_MODES and u["ammoMode"] != "auto":
+        bits.append(str(u["ammoMode"]))
+    if u.get("ammo") is not None and _num(u, "ammo", "x") and float(u["ammo"]) < (0.75 if own else 0.4):
+        bits.append(f"ammo {float(u['ammo']) * 100:.0f}%")
+    return " ".join(bits)
+
+
+def enemy_bore(u):
+    """'rifled', 'breech' (breech-loader or repeater), 'carbine' or '' (smoothbore musket or gun: the default)."""
+    label = weapon_label(u.get("weapon")).lower()
+    got = shoot_class(u.get("weapon"))
+    if got is not None and got[0] in ("repeater", "revolver") and u.get("kind") != "Artillery":
+        return f"{got[0]} {got[1]}"                     # "repeater 7", "revolver 6": how many shots before reloading
+    if got is not None and got[0] in ("double", "flintlock"):
+        return got[0]
+    if "breech" in label:
+        return "breech"
+    if "rifled" in label:
+        return "rifled"
+    if label.startswith("carbine"):
+        return "carbine"
+    if label.startswith("rifle"):
+        return "rifle"
+    return ""
+
+
 def roster_lines(units):
     """One line per unit for the YOUR BRIGADES block of the system prompt."""
     out = []
@@ -188,3 +295,6 @@ def roster_lines(units):
         if static:
             out.append(f"{u['id']} {u['name']} ({u['kind']}): {static}")
     return out
+
+
+load_shoot_types()
